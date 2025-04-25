@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  url_discovery:
+    build:
+      context: .
+      dockerfile: Dockerfile.discovery
+    ports:
+      - "8000:8000"
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - recruitment_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  url_processing:
+    build:
+      context: .
+      dockerfile: Dockerfile.processing
+    ports:
+      - "8001:8001"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+      - RECRUITMENT_PATH=/app/databases/recruitment.db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./logs:/app/logs
+      - ./databases:/app/databases
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - recruitment_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - recruitment_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  rabbitmq_data:
+
+networks:
+  recruitment_network:
+    driver: bridge 
