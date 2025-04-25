@@ -23,14 +23,21 @@ class SensitiveDataFilter(logging.Filter):
 
 def setup_logging(
         log_name="app",
-        log_dir="logs",
-        log_level=logging.INFO,
+        log_dir=None,
+        log_level=None,
         rotation_size=10 * 1024 * 1024,
         backup_count=10,
         console_output=True,
         console_level=logging.DEBUG
 ):
     """Configure application logging with rotation."""
+    # Get log directory from environment or use default
+    log_dir = log_dir or os.getenv('LOG_DIR', 'logs')
+    
+    # Get log level from environment or use default
+    log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
+    log_level = getattr(logging, log_level_str, logging.INFO)
+
     # Create logs directory
     log_path = Path(log_dir)
     log_path.mkdir(exist_ok=True)
@@ -68,6 +75,10 @@ def setup_logging(
         console_handler.setLevel(console_level)
         console_handler.setFormatter(detailed_formatter)
         logger.addHandler(console_handler)
+
+    # Log initial configuration
+    logger.info(f"Logging configured - Level: {log_level_str}, Directory: {log_dir}")
+    logger.debug("Debug logging enabled")
 
     return logger
 

@@ -56,15 +56,15 @@ COPY --from=builder /root/.local/lib/python3.11/site-packages /usr/local/lib/pyt
 COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
 
 # Copy only necessary files
-COPY url_processing_service.py .
-COPY logging_config.py .
+COPY recruitment/url_processing_service.py .
+COPY recruitment/logging_config.py .
 COPY libraries ./libraries
-COPY prompts.py .
-COPY recruitment_models.py .
-COPY response_processor_functions.py .
-COPY batch_processor.py .
-COPY web_crawler_lib.py .
-COPY utils.py .
+COPY recruitment/prompts.py .
+COPY recruitment/recruitment_models.py .
+COPY recruitment/response_processor_functions.py .
+COPY recruitment/batch_processor.py .
+COPY libraries/web_crawler_lib.py .
+COPY recruitment/utils.py .
 COPY recruitment ./recruitment
 
 # Create logs and data directories

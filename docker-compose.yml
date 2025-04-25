@@ -12,8 +12,11 @@ services:
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=guest
       - RABBITMQ_PASSWORD=guest
+      - LOG_LEVEL=DEBUG
+      - LOG_DIR=/app/logs
     volumes:
       - ./logs:/app/logs
+      - ./databases:/app/databases
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -38,6 +41,8 @@ services:
       - RABBITMQ_USER=guest
       - RABBITMQ_PASSWORD=guest
       - RECRUITMENT_PATH=/app/databases/recruitment.db
+      - LOG_LEVEL=DEBUG
+      - LOG_DIR=/app/logs
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
