@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import uuid
 
-from logging_config import setup_logging
+from recruitment.logging_config import setup_logging
 
 # Load environment variables
 load_dotenv()

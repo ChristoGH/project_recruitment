@@ -15,7 +15,7 @@ from queue import Queue, Empty
 from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 from crawl4ai import AsyncWebCrawler
-from logging_config import setup_logging
+from recruitment.logging_config import setup_logging
 
 # Create module-specific logger
 logger = setup_logging("web_crawler_lib")

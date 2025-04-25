@@ -3,9 +3,9 @@
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
 import json
-from recruitment_db import DatabaseError
+from recruitment.recruitment_db import DatabaseError
 
-from logging_config import setup_logging
+from recruitment.logging_config import setup_logging
 
 # Create module-specific logger
 logger = setup_logging("batch_processor")

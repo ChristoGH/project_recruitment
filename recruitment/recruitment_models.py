@@ -6,7 +6,7 @@ import re
 import logging
 from datetime import datetime
 
-from logging_config import setup_logging
+from recruitment.logging_config import setup_logging
 
 # Create module-specific logger
 logger = setup_logging("recruitment_models")

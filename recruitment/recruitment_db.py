@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterator, Union, Tuple
-from logging_config import setup_logging
+from recruitment.logging_config import setup_logging
 from dotenv import load_dotenv
 import threading
 
