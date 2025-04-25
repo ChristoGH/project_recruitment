@@ -1,3 +1,10 @@
+import os
+import sys
+
+# Add the current directory to the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
+
 import streamlit as st
 import sqlite3
 from typing import List, Dict, Any
