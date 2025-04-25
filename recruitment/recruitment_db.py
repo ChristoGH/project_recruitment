@@ -279,23 +279,24 @@ class RecruitmentDatabase:
             raise DatabaseError(f"Failed to set up database: {str(e)}")
 
     def insert_url(self, url: str, domain: str, source: str) -> int:
-        """Insert a URL into the database."""
+        """Insert a URL into the database or return existing URL ID if it exists."""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                try:
-                    cursor.execute(
-                        "INSERT INTO urls (url, domain_name, source) VALUES (?, ?, ?)",
-                        (url, domain, source)
-                    )
-                    conn.commit()
-                    return cursor.lastrowid
-                except sqlite3.IntegrityError:
-                    cursor.execute(
-                        "SELECT id FROM urls WHERE url = ?",
-                        (url,)
-                    )
-                    return cursor.fetchone()[0]
+                
+                # First try to get existing URL ID
+                cursor.execute("SELECT id FROM urls WHERE url = ?", (url,))
+                existing = cursor.fetchone()
+                if existing:
+                    return existing[0]
+                
+                # If not exists, insert new URL
+                cursor.execute(
+                    "INSERT INTO urls (url, domain_name, source) VALUES (?, ?, ?)",
+                    (url, domain, source)
+                )
+                conn.commit()
+                return cursor.lastrowid
         except sqlite3.Error as e:
             raise DatabaseError(f"Failed to insert URL: {str(e)}")
 

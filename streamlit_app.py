@@ -3,6 +3,9 @@ import sys
 import logging
 import logging.handlers
 from pathlib import Path
+from typing import List, Dict, Any, Optional
+import pika
+import json
 
 # Get the absolute path to the project root
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -12,18 +15,12 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import streamlit as st
-import sqlite3
-from typing import List, Dict, Any
 import pandas as pd
 from urllib.parse import urlparse
-from recruitment.recruitment_db import RecruitmentDatabase
-from recruitment.batch_processor import (
-    process_company, process_job, process_skills, process_location,
-    process_benefits, process_contacts, process_job_advert, process_industry
-)
 from libraries.web_crawler_lib import WebCrawlerResult, crawl_website
 import asyncio
-import json
+from recruitment.prompts import LIST_PROMPTS, NON_LIST_PROMPTS, COMPLEX_PROMPTS
+from recruitment.utils import get_model_for_prompt
 
 def setup_logging(log_name="app", log_dir=None, log_level=None):
     """Configure application logging."""
@@ -75,17 +72,68 @@ if 'selected_url' not in st.session_state:
     st.session_state.selected_url = None
 if 'crawler_result' not in st.session_state:
     st.session_state.crawler_result = None
-if 'processing_steps' not in st.session_state:
-    st.session_state.processing_steps = []
 
-def get_urls_from_db() -> List[Dict[str, Any]]:
-    """Get all URLs from the database."""
-    db = RecruitmentDatabase()
-    with db._get_connection() as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM urls ORDER BY id")
-        return [dict(row) for row in cursor.fetchall()]
+def get_rabbitmq_connection():
+    """Get a connection to RabbitMQ."""
+    try:
+        rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
+        rabbitmq_port = int(os.getenv("RABBITMQ_PORT", "5672"))
+        rabbitmq_user = os.getenv("RABBITMQ_USER", "guest")
+        rabbitmq_password = os.getenv("RABBITMQ_PASSWORD", "guest")
+        
+        credentials = pika.PlainCredentials(rabbitmq_user, rabbitmq_password)
+        parameters = pika.ConnectionParameters(
+            host=rabbitmq_host,
+            port=rabbitmq_port,
+            credentials=credentials,
+            heartbeat=600,
+            blocked_connection_timeout=300
+        )
+        
+        connection = pika.BlockingConnection(parameters)
+        return connection
+    except Exception as e:
+        logger.error(f"Failed to connect to RabbitMQ: {e}")
+        return None
+
+def get_urls_from_queue() -> List[Dict[str, Any]]:
+    """Get URLs from RabbitMQ queue."""
+    try:
+        connection = get_rabbitmq_connection()
+        if not connection:
+            return []
+            
+        channel = connection.channel()
+        queue_name = "recruitment_urls"
+        channel.queue_declare(queue=queue_name, durable=True)
+        
+        # Get message count
+        queue_info = channel.queue_declare(queue=queue_name, durable=True, passive=True)
+        message_count = queue_info.method.message_count
+        
+        if message_count == 0:
+            return []
+            
+        # Get messages without consuming them
+        urls = []
+        for _ in range(min(message_count, 100)):  # Limit to 100 messages
+            method, properties, body = channel.basic_get(queue=queue_name)
+            if method:
+                message = json.loads(body)
+                urls.append({
+                    "url": message.get("url"),
+                    "search_id": message.get("search_id"),
+                    "timestamp": message.get("timestamp"),
+                    "processing_status": "pending"  # Since it's in the queue, it's pending
+                })
+                # Requeue the message
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+        
+        connection.close()
+        return urls
+    except Exception as e:
+        logger.error(f"Error getting URLs from queue: {e}")
+        return []
 
 def get_domain(url: str) -> str:
     """Extract domain from URL."""
@@ -94,24 +142,59 @@ def get_domain(url: str) -> str:
     except:
         return ""
 
-async def process_url_step(url_id: int, step_name: str, processor_func, data: Dict, perform_insert: bool = False):
-    """Process a single step of URL processing."""
+async def process_prompt(prompt_type: str, text: str) -> Dict[str, Any]:
+    """Process a prompt using the chat engine."""
     try:
-        db = RecruitmentDatabase()
-        if perform_insert:
-            processor_func(db, url_id, data)
-            return True, f"Successfully processed and inserted {step_name}"
+        # Get the appropriate prompt
+        if prompt_type in LIST_PROMPTS:
+            prompt = LIST_PROMPTS[prompt_type]
+        elif prompt_type in NON_LIST_PROMPTS:
+            prompt = NON_LIST_PROMPTS[prompt_type]
+        elif prompt_type in COMPLEX_PROMPTS:
+            prompt = COMPLEX_PROMPTS[prompt_type]
         else:
-            # Just show what would be processed
-            return True, f"Would process {step_name} with data: {json.dumps(data, indent=2)}"
+            return {"error": f"Unknown prompt type: {prompt_type}"}
+
+        # Here you would typically call your LLM with the prompt and text
+        # For this example, we'll simulate a response with the correct format
+        if prompt_type == "recruitment_prompt":
+            response = {
+                "answer": "yes",
+                "evidence": ["The page contains job requirements", "There is a salary range mentioned"]
+            }
+        elif prompt_type == "company_prompt":
+            response = {"company": "Example Company"}
+        elif prompt_type == "job_prompt":
+            response = {"jobs": ["Software Engineer", "Data Scientist"]}  # Changed to use jobs list
+        elif prompt_type == "benefits_prompt":
+            response = {"benefits": ["Health insurance", "401k", "Remote work"]}
+        elif prompt_type == "skills_prompt":
+            response = {"skills": ["Python", "SQL", "Machine Learning"]}
+        elif prompt_type == "duties_prompt":
+            response = {"duties": ["Develop software", "Write documentation", "Code review"]}
+        elif prompt_type == "qualifications_prompt":
+            response = {"qualifications": ["Bachelor's degree", "5 years experience"]}
+        else:
+            response = {"error": "No response generated"}
+
+        # Validate the response using the appropriate model
+        try:
+            model = get_model_for_prompt(prompt_type)
+            validated_response = model(**response)
+            return validated_response.model_dump()
+        except Exception as e:
+            logger.error(f"Error validating response: {e}")
+            return {"error": f"Validation error: {str(e)}"}
+
     except Exception as e:
-        return False, f"Error processing {step_name}: {str(e)}"
+        logger.error(f"Error processing prompt: {e}")
+        return {"error": f"Processing error: {str(e)}"}
 
 def main():
     st.title("URL Processing Dashboard")
     
-    # Get URLs from database
-    urls = get_urls_from_db()
+    # Get URLs from RabbitMQ queue
+    urls = get_urls_from_queue()
     
     # Create a DataFrame for the URLs
     df = pd.DataFrame(urls)
@@ -129,14 +212,11 @@ def main():
         st.session_state.selected_url = df.iloc[selected_index]
         st.write(f"Selected URL: {st.session_state.selected_url['url']}")
     else:
-        st.warning("No URLs found in the database")
+        st.warning("No URLs found in the queue")
         return
     
-    # Processing Steps
-    st.header("Processing Steps")
-    
-    # Step 1: Web Crawling
-    if st.button("1. Crawl Website"):
+    # Web Crawling
+    if st.button("Extract Text from Website"):
         with st.spinner("Crawling website..."):
             try:
                 result = asyncio.run(crawl_website(
@@ -151,153 +231,62 @@ def main():
                 ))
                 st.session_state.crawler_result = result
                 st.success("Website crawled successfully!")
-                st.json(result.__dict__)
+                
+                # Display extracted text
+                st.subheader("Extracted Text")
+                st.text_area("Website Content", result.markdown, height=300)
             except Exception as e:
                 st.error(f"Error crawling website: {str(e)}")
     
-    # Step 2: Process Company Information
+    # Process with Chat Engine
     if st.session_state.crawler_result:
-        st.subheader("2. Process Company Information")
-        perform_insert = st.checkbox("Insert into database", key="company_insert")
-        if st.button("Process Company Information"):
-            with st.spinner("Processing company information..."):
-                success, message = asyncio.run(process_url_step(
-                    st.session_state.selected_url['id'],
-                    "company information",
-                    process_company,
-                    st.session_state.crawler_result.__dict__,
-                    perform_insert
-                ))
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-    
-    # Step 3: Process Job Details
-    if st.session_state.crawler_result:
-        st.subheader("3. Process Job Details")
-        perform_insert = st.checkbox("Insert into database", key="job_insert")
-        if st.button("Process Job Details"):
-            with st.spinner("Processing job details..."):
-                success, message = asyncio.run(process_url_step(
-                    st.session_state.selected_url['id'],
-                    "job details",
-                    process_job,
-                    st.session_state.crawler_result.__dict__,
-                    perform_insert
-                ))
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-    
-    # Step 4: Process Skills
-    if st.session_state.crawler_result:
-        st.subheader("4. Process Skills")
-        perform_insert = st.checkbox("Insert into database", key="skills_insert")
-        if st.button("Process Skills"):
-            with st.spinner("Processing skills..."):
-                success, message = asyncio.run(process_url_step(
-                    st.session_state.selected_url['id'],
-                    "skills",
-                    process_skills,
-                    st.session_state.crawler_result.__dict__,
-                    perform_insert
-                ))
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-    
-    # Step 5: Process Location
-    if st.session_state.crawler_result:
-        st.subheader("5. Process Location")
-        perform_insert = st.checkbox("Insert into database", key="location_insert")
-        if st.button("Process Location"):
-            with st.spinner("Processing location..."):
-                success, message = asyncio.run(process_url_step(
-                    st.session_state.selected_url['id'],
-                    "location",
-                    process_location,
-                    st.session_state.crawler_result.__dict__,
-                    perform_insert
-                ))
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-    
-    # Step 6: Process Benefits
-    if st.session_state.crawler_result:
-        st.subheader("6. Process Benefits")
-        perform_insert = st.checkbox("Insert into database", key="benefits_insert")
-        if st.button("Process Benefits"):
-            with st.spinner("Processing benefits..."):
-                success, message = asyncio.run(process_url_step(
-                    st.session_state.selected_url['id'],
-                    "benefits",
-                    process_benefits,
-                    st.session_state.crawler_result.__dict__,
-                    perform_insert
-                ))
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-    
-    # Step 7: Process Contacts
-    if st.session_state.crawler_result:
-        st.subheader("7. Process Contacts")
-        perform_insert = st.checkbox("Insert into database", key="contacts_insert")
-        if st.button("Process Contacts"):
-            with st.spinner("Processing contacts..."):
-                success, message = asyncio.run(process_url_step(
-                    st.session_state.selected_url['id'],
-                    "contacts",
-                    process_contacts,
-                    st.session_state.crawler_result.__dict__,
-                    perform_insert
-                ))
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-    
-    # Step 8: Process Job Advert
-    if st.session_state.crawler_result:
-        st.subheader("8. Process Job Advert")
-        perform_insert = st.checkbox("Insert into database", key="job_advert_insert")
-        if st.button("Process Job Advert"):
-            with st.spinner("Processing job advert..."):
-                success, message = asyncio.run(process_url_step(
-                    st.session_state.selected_url['id'],
-                    "job advert",
-                    process_job_advert,
-                    st.session_state.crawler_result.__dict__,
-                    perform_insert
-                ))
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-    
-    # Step 9: Process Industry
-    if st.session_state.crawler_result:
-        st.subheader("9. Process Industry")
-        perform_insert = st.checkbox("Insert into database", key="industry_insert")
-        if st.button("Process Industry"):
-            with st.spinner("Processing industry..."):
-                success, message = asyncio.run(process_url_step(
-                    st.session_state.selected_url['id'],
-                    "industry",
-                    process_industry,
-                    st.session_state.crawler_result.__dict__,
-                    perform_insert
-                ))
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
+        st.header("Process with Chat Engine")
+        
+        # First, get jobs from the job_prompt
+        if "jobs" not in st.session_state:
+            with st.spinner("Extracting jobs..."):
+                try:
+                    result = asyncio.run(process_prompt(
+                        "job_prompt",
+                        st.session_state.crawler_result.markdown
+                    ))
+                    if "jobs" in result:
+                        st.session_state.jobs = result["jobs"]
+                        st.success(f"Found {len(result['jobs'])} jobs!")
+                    else:
+                        st.error("No jobs found in the response")
+                except Exception as e:
+                    st.error(f"Error extracting jobs: {str(e)}")
+        
+        # If we have jobs, let the user select which ones to process
+        if "jobs" in st.session_state and st.session_state.jobs:
+            st.subheader("Select Jobs to Process")
+            selected_jobs = st.multiselect(
+                "Choose jobs to process",
+                st.session_state.jobs,
+                default=st.session_state.jobs  # Select all by default
+            )
+            
+            if selected_jobs:
+                st.subheader("Select Prompt Type")
+                prompt_types = list(LIST_PROMPTS.keys()) + list(NON_LIST_PROMPTS.keys()) + list(COMPLEX_PROMPTS.keys())
+                selected_prompt = st.selectbox("Choose a prompt type", prompt_types)
+                
+                if st.button("Process Selected Jobs"):
+                    with st.spinner("Processing..."):
+                        try:
+                            # Process each selected job
+                            for job in selected_jobs:
+                                st.write(f"Processing {job}...")
+                                # Add job context to the prompt
+                                text = f"Job Title: {job}\n\n{st.session_state.crawler_result.markdown}"
+                                result = asyncio.run(process_prompt(
+                                    selected_prompt,
+                                    text
+                                ))
+                                st.json(result)
+                        except Exception as e:
+                            st.error(f"Error processing jobs: {str(e)}")
 
 if __name__ == "__main__":
     main() 
