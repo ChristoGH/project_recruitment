@@ -18,6 +18,45 @@ The URL Processing Dashboard is a Streamlit application that allows you to monit
   9. Industry Processing
 - View detailed error messages and processing results
 - Monitor the progress of each processing step
+- Support for processing multiple jobs from a single URL
+
+### Multiple Jobs Per URL Support
+
+The system now supports processing multiple job listings from a single URL. This feature includes:
+
+- **Job Extraction**: The system can identify and extract multiple job titles from a single URL
+- **Job-Specific Processing**: Each job is processed independently with its own:
+  - Benefits
+  - Skills and experience requirements
+  - Duties and responsibilities
+  - Qualifications
+  - Attributes
+  - Contact information
+- **Shared Information**: Common information across jobs is processed once:
+  - Company details
+  - Agency information
+  - Location data
+  - Job advert details
+  - Industry classification
+
+### Database Structure
+
+The database has been updated to support multiple jobs per URL:
+
+- Each job is stored as a separate record in the `jobs` table
+- Job-specific information is linked through junction tables:
+  - `job_skills`
+  - `job_benefits`
+  - `job_duties`
+  - `job_qualifications`
+  - `job_attributes`
+  - `job_contacts`
+- Common information is stored in separate tables and linked to the URL:
+  - `companies`
+  - `agencies`
+  - `locations`
+  - `job_adverts`
+  - `industries`
 
 ### Installation
 
@@ -38,6 +77,7 @@ streamlit run streamlit_app.py
    - Click the "Crawl Website" button to start the process
    - After crawling, click each subsequent button to process different aspects of the job posting
    - View the results and any errors that occur during processing
+   - For URLs with multiple jobs, each job will be processed independently
 
 ### Troubleshooting
 
@@ -46,3 +86,26 @@ If you encounter any issues:
 - Verify that all required Python packages are installed
 - Check the Streamlit console for detailed error messages
 - Ensure the web crawler has proper access to the target URLs
+- For multiple job processing issues, check the logs for job-specific errors
+
+### Development Notes
+
+Recent changes to support multiple jobs per URL:
+
+1. **Models**:
+   - Updated `JobResponse` model to handle multiple jobs
+   - Added validation for job titles
+
+2. **Prompts**:
+   - Modified prompts to include job-specific context
+   - Added job title prefix to relevant prompts
+
+3. **Processing**:
+   - Updated batch processor to handle multiple jobs
+   - Added job-specific processing functions
+   - Improved error handling and logging
+
+4. **Database**:
+   - Enhanced job insertion logic
+   - Added job title retrieval functionality
+   - Updated transaction handling for multiple jobs

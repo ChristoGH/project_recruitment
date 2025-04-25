@@ -1,7 +1,15 @@
 # Prompts that return lists
 LIST_PROMPTS = {
+    "job_prompt": (
+        "Assistant, please extract all advertised job positions from this article if any. "
+        "Each job should be descriptive, easily understood by and generally used in the industry. "
+        "Return your answer in the following JSON format:\n"
+        "{\n"
+        '  "jobs": ["job1", "job2", "job3"] or null\n'
+        "}"
+    ),
     "benefits_prompt": (
-        "Assistant, please extract the benefits offered to successful candidates of the advertised job(s) from this article, if any. "
+        "Assistant, for the following job '{job_title}', please extract the benefits offered to successful candidates from this article, if any. "
         "Benefits are the perks, incentives, or rewards that the successful candidate will receive as part of their employment. "
         "Return your answer in the following JSON format:\n"
         "{\n"
@@ -9,7 +17,7 @@ LIST_PROMPTS = {
         "}"
     ),
     "attributes_prompt": (
-        "Assistant, please extract the attributes required of candidates of the advertised job(s) from this article, if any. "
+        "Assistant, for the following job '{job_title}', please extract the attributes required of candidates from this article, if any. "
         "Attributes are personal qualities, characteristics, or traits that are explicitly stated to be essential for the advertised job(s). "
         "Return your answer in the following JSON format:\n"
         "{\n"
@@ -17,7 +25,7 @@ LIST_PROMPTS = {
         "}"
     ),
     "duties_prompt": (
-        "Assistant, please extract the duties and responsibilities that will be required of the candidate as stipulated by this advertised job(s), if any. "
+        "Assistant, for the following job '{job_title}', please extract the duties and responsibilities that will be required of the candidate as stipulated by this advertised job, if any. "
         "Duties are the tasks and responsibilities that the succesful candidate will be expected to perform. "
         "Return your answer in the following JSON format:\n"
         "{\n"
@@ -25,7 +33,7 @@ LIST_PROMPTS = {
         "}"
     ),
     "qualifications_prompt": (
-        "Assistant, please extract the qualifications needed of a successful candidate as stipulated by this advertised job(s), if any. "
+        "Assistant, for the following job '{job_title}', please extract the qualifications needed of a successful candidate as stipulated by this advertised job, if any. "
         "Qualifications are strictly diplomas, degrees, certificates, or any other form of educational attainment. "
         "Return your answer in the following JSON format:\n"
         "{\n"
@@ -33,7 +41,7 @@ LIST_PROMPTS = {
         "}"
     ),
     "contacts_prompt": (
-        "Assistant, please extract the name of the contact person(s) for this advertised job(s) from this article, if any. "
+        "Assistant, for the following job '{job_title}', please extract the name of the contact person(s) for this advertised job from this article, if any. "
         "Return your answer in the following JSON format:\n"
         "{\n"
         '  "contacts": ["firstname1 secondname1", "firstname2 secondname2", "firstname2 secondname2"] or null\n'

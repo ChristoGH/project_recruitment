@@ -40,16 +40,12 @@ def process_all_prompt_responses(db, url_id: int, prompt_responses: Dict[str, An
             for prompt_type, response in prompt_responses.items():
                 try:
                     if hasattr(response, "model_dump"):
-                        # It's a Pydantic model
                         parsed_responses[prompt_type] = response.model_dump()
                     elif isinstance(response, dict):
-                        # It's already a dict
                         parsed_responses[prompt_type] = response
                     elif isinstance(response, str):
-                        # It's a JSON string
                         parsed_responses[prompt_type] = json.loads(response)
                     else:
-                        # Unknown format, skip
                         logger.warning(f"Skipping unknown response format for {prompt_type}")
                         results["failed"] += 1
                         results["errors"].append({
@@ -66,8 +62,66 @@ def process_all_prompt_responses(db, url_id: int, prompt_responses: Dict[str, An
                     })
 
             if parsed_responses:
-                db.process_prompt_responses_in_transaction(url_id, parsed_responses)
-                results["processed"] = len(parsed_responses)
+                # First process job_prompt to get all jobs
+                job_response = parsed_responses.get("job_prompt", {})
+                jobs = job_response.get("jobs", [])
+                
+                if not jobs:
+                    logger.warning(f"No jobs found in response for URL ID {url_id}")
+                    results["failed"] += 1
+                    results["errors"].append({
+                        "prompt_type": "job_prompt",
+                        "error": "No jobs found"
+                    })
+                    return results
+                
+                # Process each job
+                for job_title in jobs:
+                    try:
+                        # Insert job
+                        job_id = db.insert_job(title=job_title, url_id=url_id)
+                        
+                        # Process job-specific prompts
+                        for prompt_type in ["benefits_prompt", "skills_prompt", "duties_prompt", 
+                                         "qualifications_prompt", "attributes_prompt"]:
+                            if prompt_type in parsed_responses:
+                                try:
+                                    # Process the prompt for this specific job
+                                    process_prompt_for_job(db, job_id, prompt_type, 
+                                                         parsed_responses[prompt_type])
+                                    results["processed"] += 1
+                                except Exception as e:
+                                    logger.error(f"Failed to process {prompt_type} for job '{job_title}': {e}")
+                                    results["failed"] += 1
+                                    results["errors"].append({
+                                        "prompt_type": prompt_type,
+                                        "job": job_title,
+                                        "error": str(e)
+                                    })
+                    except Exception as e:
+                        logger.error(f"Failed to process job '{job_title}': {e}")
+                        results["failed"] += 1
+                        results["errors"].append({
+                            "prompt_type": "job_prompt",
+                            "job": job_title,
+                            "error": str(e)
+                        })
+                
+                # Process non-job specific prompts
+                for prompt_type in ["company_prompt", "agency_prompt", "location_prompt", 
+                                  "jobadvert_prompt", "recruitment_prompt"]:
+                    if prompt_type in parsed_responses:
+                        try:
+                            process_prompt(db, url_id, prompt_type, parsed_responses[prompt_type])
+                            results["processed"] += 1
+                        except Exception as e:
+                            logger.error(f"Failed to process {prompt_type}: {e}")
+                            results["failed"] += 1
+                            results["errors"].append({
+                                "prompt_type": prompt_type,
+                                "error": str(e)
+                            })
+
         except Exception as e:
             logger.error(f"Transaction processing failed: {e}", exc_info=True)
             results["success"] = False
@@ -76,134 +130,9 @@ def process_all_prompt_responses(db, url_id: int, prompt_responses: Dict[str, An
                 "error": str(e)
             })
     else:
-        # Process responses individually using the standard methods
-        
-        # Process in a specific order to maintain proper relationships
-        # 1. First process recruitment_prompt
-        if "recruitment_prompt" in prompt_responses:
-            try:
-                process_recruitment(db, url_id, prompt_responses["recruitment_prompt"])
-                results["processed"] += 1
-            except Exception as e:
-                logger.error(f"Failed to process recruitment_prompt: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "prompt_type": "recruitment_prompt",
-                    "error": str(e)
-                })
-        
-        # 2. First process company_prompt and agency_prompt to establish company_id and recruiter_id
-        company_id = None
-        recruiter_id = None
-        
-        # Process company first
-        if "company_prompt" in prompt_responses:
-            try:
-                company_id, company_name = process_company(db, url_id, prompt_responses["company_prompt"])
-                results["processed"] += 1
-                logger.info(f"Processed company with ID {company_id} for URL ID {url_id}")
-            except Exception as e:
-                logger.error(f"Failed to process company_prompt: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "prompt_type": "company_prompt",
-                    "error": str(e)
-                })
-        
-        # Then process agency
-        if "agency_prompt" in prompt_responses:
-            try:
-                recruiter_id = process_agency(db, url_id, prompt_responses["agency_prompt"])
-                results["processed"] += 1
-                logger.info(f"Processed agency with recruiter ID {recruiter_id} for URL ID {url_id}")
-            except Exception as e:
-                logger.error(f"Failed to process agency_prompt: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "prompt_type": "agency_prompt",
-                    "error": str(e)
-                })
-        
-        # 3. Then process job_prompt with the company_id and recruiter_id
-        if "job_prompt" in prompt_responses:
-            try:
-                # Process the job with company and recruiter info
-                job_data = _ensure_dict(prompt_responses["job_prompt"])
-                title = job_data.get("title")
-                
-                if title:
-                    # Use the company_name we found earlier
-                    process_job(db, url_id, prompt_responses["job_prompt"], company_name)
-                    logger.info(f"Processed job advert '{title}' with company name '{company_name}'")
-                    
-                results["processed"] += 1
-            except Exception as e:
-                logger.error(f"Failed to process job_prompt: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "prompt_type": "job_prompt",
-                    "error": str(e)
-                })
-        
-        # 4. Process jobadvert_prompt after job_prompt
-        if "jobadvert_prompt" in prompt_responses:
-            try:
-                process_job_advert(db, url_id, prompt_responses["jobadvert_prompt"])
-                results["processed"] += 1
-            except Exception as e:
-                logger.error(f"Failed to process jobadvert_prompt: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "prompt_type": "jobadvert_prompt",
-                    "error": str(e)
-                })
-        
-        # 5. Process all other prompt types
-        other_prompts = {k: v for k, v in prompt_responses.items() 
-                        if k not in ["recruitment_prompt", "company_prompt", 
-                                    "agency_prompt", "job_prompt", "jobadvert_prompt"]}
-        
-        for prompt_type, response in other_prompts.items():
-            try:
-                if prompt_type == "company_phone_number_prompt":
-                    process_company_phone_number(db, url_id, response)
-                elif prompt_type == "email_prompt":
-                    process_email(db, url_id, response)
-                elif prompt_type == "link_prompt":
-                    process_link(db, url_id, response)
-                elif prompt_type == "benefits_prompt":
-                    process_benefits(db, url_id, response)
-                elif prompt_type == "skills_prompt":
-                    process_skills(db, url_id, response)
-                elif prompt_type == "attributes_prompt":
-                    process_attributes(db, url_id, response)
-                elif prompt_type == "contacts_prompt":
-                    process_contacts(db, url_id, response)
-                elif prompt_type == "location_prompt":
-                    process_location(db, url_id, response)
-                elif prompt_type == "qualifications_prompt":
-                    process_qualifications(db, url_id, response)
-                elif prompt_type == "duties_prompt":
-                    process_duties(db, url_id, response)
-                elif prompt_type == "industry_prompt":
-                    process_industry(db, url_id, response)
-                else:
-                    logger.warning(f"Unknown prompt type: {prompt_type}")
-                    results["failed"] += 1
-                    results["errors"].append({
-                        "prompt_type": prompt_type,
-                        "error": "Unknown prompt type"
-                    })
-                    continue
-                
-                results["processed"] += 1
-            except Exception as e:
-                logger.error(f"Failed to process {prompt_type}: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "prompt_type": prompt_type,
-                    "error": str(e)
-                })
+        # Process individually using the PromptResponseProcessor
+        processor = PromptResponseProcessor(db)
+        return processor.process_all_responses(url_id, prompt_responses, use_transaction)
 
     return results
 
@@ -709,3 +638,40 @@ def process_industry(db, url_id: int, response: Dict[str, Any]) -> None:
     except Exception as e:
         logger.error(f"Error processing industry: {e}")
         raise
+
+def process_prompt_for_job(db, job_id: int, prompt_type: str, data: Dict[str, Any]) -> None:
+    """Process a prompt response for a specific job."""
+    if prompt_type == "benefits_prompt":
+        benefits = data.get("benefits", [])
+        for benefit in benefits:
+            benefit_id = db.insert_benefit(benefit)
+            db.link_job_benefit(job_id, benefit_id)
+            
+    elif prompt_type == "skills_prompt":
+        skills = data.get("skills", [])
+        for skill_data in skills:
+            if isinstance(skill_data, (tuple, list)):
+                skill, experience = skill_data[0], skill_data[1] if len(skill_data) > 1 else None
+            else:
+                skill, experience = skill_data.get("skill"), skill_data.get("experience")
+            
+            skill_id = db.insert_skill(skill)
+            db.link_job_skill(job_id, skill_id, experience)
+            
+    elif prompt_type == "duties_prompt":
+        duties = data.get("duties", [])
+        for duty in duties:
+            duty_id = db.insert_duty(duty)
+            db.link_job_duty(job_id, duty_id)
+            
+    elif prompt_type == "qualifications_prompt":
+        qualifications = data.get("qualifications", [])
+        for qualification in qualifications:
+            qual_id = db.insert_qualification(qualification)
+            db.link_job_qualification(job_id, qual_id)
+            
+    elif prompt_type == "attributes_prompt":
+        attributes = data.get("attributes", [])
+        for attribute in attributes:
+            attr_id = db.insert_attribute(attribute)
+            db.link_job_attribute(job_id, attr_id)

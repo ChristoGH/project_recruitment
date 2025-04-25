@@ -65,8 +65,33 @@ class PromptResponseProcessor:
             # Validate the data
             data = self._validate_data(prompt_type, data)
 
-            # Process the validated data
-            self._process_validated_data(url_id, prompt_type, data)
+            # Special handling for job_prompt
+            if prompt_type == "job_prompt":
+                job_ids = self._process_job(url_id, data)
+                if not job_ids:
+                    logger.warning(f"No valid jobs found in response for URL ID {url_id}")
+                    return
+                    
+                # Process other prompts for each job
+                for job_id in job_ids:
+                    try:
+                        # Get job title for context
+                        job_title = self.db.get_job_title(job_id)
+                        if not job_title:
+                            continue
+                            
+                        # Process job-specific prompts
+                        for other_prompt_type in ["benefits_prompt", "skills_prompt", "duties_prompt", 
+                                                "qualifications_prompt", "attributes_prompt"]:
+                            if other_prompt_type in response:
+                                self._process_job_specific_prompt(job_id, other_prompt_type, 
+                                                               self._parse_response(response[other_prompt_type]))
+                    except Exception as e:
+                        logger.error(f"Error processing prompts for job ID {job_id}: {e}")
+                        continue
+            else:
+                # Process non-job specific prompts
+                self._process_validated_data(url_id, prompt_type, data)
 
         except (ValidationFailedError, JSONDecodeError) as e:
             # These are expected errors we want to log but might not halt execution
@@ -257,11 +282,70 @@ class PromptResponseProcessor:
         if agency:
             self.db.insert_agency(url_id, agency)
 
-    def _process_job(self, url_id: int, data: Dict[str, Any]) -> None:
-        """Process job title."""
-        title = data.get("title")
-        if title:
-            self.db.insert_job_title(url_id, title)
+    def _process_job(self, url_id: int, data: Dict[str, Any]) -> List[int]:
+        """Process job titles and return list of job IDs."""
+        job_ids = []
+        jobs = data.get("jobs", [])
+        
+        if not jobs:
+            logger.warning(f"No jobs found in response for URL ID {url_id}")
+            return job_ids
+            
+        for job_title in jobs:
+            try:
+                job_id = self.db.insert_job(
+                    title=job_title,
+                    url_id=url_id
+                )
+                job_ids.append(job_id)
+                logger.info(f"Created job record with ID {job_id} for title '{job_title}'")
+            except Exception as e:
+                logger.error(f"Failed to process job title '{job_title}': {e}")
+                continue
+                
+        return job_ids
+
+    def _process_job_specific_prompt(self, job_id: int, prompt_type: str, data: Dict[str, Any]) -> None:
+        """Process a prompt response for a specific job."""
+        try:
+            if prompt_type == "benefits_prompt":
+                benefits = data.get("benefits", [])
+                for benefit in benefits:
+                    benefit_id = self.db.insert_benefit(benefit)
+                    self.db.link_job_benefit(job_id, benefit_id)
+                    
+            elif prompt_type == "skills_prompt":
+                skills = data.get("skills", [])
+                for skill_data in skills:
+                    if isinstance(skill_data, (tuple, list)):
+                        skill, experience = skill_data[0], skill_data[1] if len(skill_data) > 1 else None
+                    else:
+                        skill, experience = skill_data.get("skill"), skill_data.get("experience")
+                    
+                    skill_id = self.db.insert_skill(skill)
+                    self.db.link_job_skill(job_id, skill_id, experience)
+                    
+            elif prompt_type == "duties_prompt":
+                duties = data.get("duties", [])
+                for duty in duties:
+                    duty_id = self.db.insert_duty(duty)
+                    self.db.link_job_duty(job_id, duty_id)
+                    
+            elif prompt_type == "qualifications_prompt":
+                qualifications = data.get("qualifications", [])
+                for qualification in qualifications:
+                    qual_id = self.db.insert_qualification(qualification)
+                    self.db.link_job_qualification(job_id, qual_id)
+                    
+            elif prompt_type == "attributes_prompt":
+                attributes = data.get("attributes", [])
+                for attribute in attributes:
+                    attr_id = self.db.insert_attribute(attribute)
+                    self.db.link_job_attribute(job_id, attr_id)
+                    
+        except Exception as e:
+            logger.error(f"Error processing {prompt_type} for job ID {job_id}: {e}")
+            raise
 
     def _process_company_phone_number(self, url_id: int, data: Dict[str, Any]) -> None:
         """Process phone number."""

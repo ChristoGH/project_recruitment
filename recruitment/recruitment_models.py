@@ -33,12 +33,14 @@ class ConfirmResponse(BaseModel):
 
 class JobResponse(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    title: Optional[str] = Field(None, min_length=2, max_length=200)
-    description: Optional[str] = None
-    salary_min: Optional[float] = None
-    salary_max: Optional[float] = None
-    salary_currency: Optional[str] = None
-    status: Optional[str] = None
+    jobs: Optional[List[str]] = None
+
+    @field_validator('jobs')
+    @classmethod
+    def validate_jobs(cls, v):
+        if v:
+            return [job.strip() for job in v if job.strip()]
+        return v
 
 
 class LocationResponse(BaseModel):

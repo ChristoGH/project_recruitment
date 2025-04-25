@@ -332,21 +332,39 @@ class RecruitmentDatabase:
         except sqlite3.Error as e:
             raise DatabaseError(f"Failed to get unprocessed URLs: {str(e)}")
 
-    def insert_job(self, title: str, description: str = None, posted_date: str = None,
-                  type: str = None, location: str = None, url_id: int = None) -> int:
+    def get_job_title(self, job_id: int) -> Optional[str]:
+        """Get the title of a job by its ID."""
+        try:
+            cursor = self._execute_query(
+                "SELECT title FROM jobs WHERE id = ?",
+                (job_id,)
+            )
+            result = cursor.fetchone()
+            return result[0] if result else None
+        except Exception as e:
+            self.logger.error(f"Error getting job title for ID {job_id}: {e}")
+            return None
+
+    def insert_job(self, title: str, url_id: int, description: Optional[str] = None,
+                  posted_date: Optional[str] = None, job_type: Optional[str] = None,
+                  location: Optional[str] = None) -> int:
         """Insert a job into the database."""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """INSERT INTO jobs (title, description, posted_date, type, location, url_id)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (title, description, posted_date, type, location, url_id)
-                )
-                conn.commit()
-                return cursor.lastrowid
-        except sqlite3.Error as e:
-            raise DatabaseError(f"Failed to insert job: {str(e)}")
+            cursor = self._execute_query(
+                """
+                INSERT INTO jobs (title, url_id, description, posted_date, type, location)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (title, url_id, description, posted_date, job_type, location)
+            )
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            # If the job already exists, get its ID
+            cursor = self._execute_query(
+                "SELECT id FROM jobs WHERE title = ? AND url_id = ?",
+                (title, url_id)
+            )
+            return cursor.fetchone()[0]
 
     def insert_advert(self, job_id: int, posted_date: str = None, application_deadline: str = None,
                      is_remote: bool = False, is_hybrid: bool = False) -> int:
