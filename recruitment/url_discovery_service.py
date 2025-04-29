@@ -47,6 +47,8 @@ class SearchConfig(BaseModel):
         '"job advertisement"',
         '"recruitment drive"'
     ]
+    batch_size: int = 100  # New field for controlling batch size
+    search_interval_minutes: int = 60  # New field for controlling search interval
 
 class SearchResponse(BaseModel):
     search_id: str
@@ -276,10 +278,60 @@ async def perform_search(search_config: SearchConfig, background_tasks: Backgrou
         logger.error(f"Error creating search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+async def perform_scheduled_search(search_config: SearchConfig):
+    """Perform scheduled search for recruitment URLs."""
+    while True:
+        try:
+            logger.info(f"Starting scheduled search with config: {search_config.id}")
+            search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            search_results[search_id] = {
+                "status": "pending",
+                "urls_found": 0,
+                "urls": [],
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            searcher = RecruitmentAdSearch(search_config)
+            urls = searcher.get_recent_ads()
+            
+            # Limit URLs to batch size
+            urls = urls[:search_config.batch_size]
+            
+            search_results[search_id]["urls"] = urls
+            search_results[search_id]["urls_found"] = len(urls)
+            
+            # Publish URLs to queue
+            await publish_urls_to_queue(urls, search_id)
+            
+            logger.info(f"Completed scheduled search. Found {len(urls)} URLs.")
+            
+            # Wait for the specified interval
+            await asyncio.sleep(search_config.search_interval_minutes * 60)
+            
+        except Exception as e:
+            logger.error(f"Error in scheduled search: {e}")
+            await asyncio.sleep(60)  # Wait 1 minute before retrying
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI application."""
+    # Start scheduled search task
+    search_config = SearchConfig(
+        id="scheduled_search",
+        batch_size=100,
+        search_interval_minutes=60
+    )
+    search_task = asyncio.create_task(perform_scheduled_search(search_config))
+    
     yield
+    
+    # Cleanup
+    search_task.cancel()
+    try:
+        await search_task
+    except asyncio.CancelledError:
+        pass
 
 app = FastAPI(
     title="URL Discovery Service",

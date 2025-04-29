@@ -269,8 +269,10 @@ def main():
             
             if selected_jobs:
                 st.subheader("Select Prompt Type")
-                prompt_types = list(LIST_PROMPTS.keys()) + list(NON_LIST_PROMPTS.keys()) + list(COMPLEX_PROMPTS.keys())
-                selected_prompt = st.selectbox("Choose a prompt type", prompt_types)
+                # Remove job_prompt from available options since we've already used it
+                available_prompts = [p for p in (list(LIST_PROMPTS.keys()) + list(NON_LIST_PROMPTS.keys()) + list(COMPLEX_PROMPTS.keys())) 
+                                  if p != "job_prompt"]
+                selected_prompt = st.selectbox("Choose a prompt type", available_prompts)
                 
                 if st.button("Process Selected Jobs"):
                     with st.spinner("Processing..."):
