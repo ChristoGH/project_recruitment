@@ -35,15 +35,19 @@ class RecruitmentDatabase:
         """Initialize the database connection."""
         self.db_path = db_path
         self.logger = setup_logging("recruitment_db")
+        self.logger.info(f"Initializing database with path: {db_path}")
         self._setup_database()
+        self.logger.info("Database initialization completed")
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection with proper settings."""
         try:
+            self.logger.debug(f"Connecting to database at {self.db_path}")
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
+            self.logger.debug("Database connection established")
             return conn
         except sqlite3.Error as e:
             self.logger.error(f"Failed to connect to database: {str(e)}")
@@ -71,10 +75,12 @@ class RecruitmentDatabase:
     def _setup_database(self):
         """Set up the database tables if they don't exist."""
         try:
+            self.logger.info("Setting up database tables")
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 
                 # Create tables
+                self.logger.debug("Creating urls table")
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS urls (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,6 +93,7 @@ class RecruitmentDatabase:
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+                self.logger.debug("urls table created")
 
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS url_processing_status (
@@ -633,4 +640,27 @@ class RecruitmentDatabase:
                 )
                 conn.commit()
         except sqlite3.Error as e:
-            raise DatabaseError(f"Failed to link job and agency: {str(e)}") 
+            raise DatabaseError(f"Failed to link job and agency: {str(e)}")
+
+    def initialize(self):
+        """Initialize the database connection and verify it's working."""
+        self.logger.info("Initializing database connection")
+        try:
+            # Test the connection
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1")
+                result = cursor.fetchone()
+                if result and result[0] == 1:
+                    self.logger.info("Database connection test successful")
+                else:
+                    raise DatabaseError("Database connection test failed")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize database: {e}")
+            raise DatabaseError(f"Failed to initialize database: {e}")
+
+    def close(self):
+        """Close any open database connections."""
+        self.logger.info("Closing database connections")
+        # SQLite connections are automatically closed when they go out of scope
+        # This method is here for consistency and future use if needed 

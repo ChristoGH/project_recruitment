@@ -22,64 +22,70 @@ class SensitiveDataFilter(logging.Filter):
 
 
 def setup_logging(
-        log_name="app",
-        log_dir=None,
-        log_level=None,
-        rotation_size=10 * 1024 * 1024,
-        backup_count=10,
-        console_output=True,
-        console_level=logging.DEBUG
-):
-    """Configure application logging with rotation."""
-    # Get log directory from environment or use default
-    log_dir = log_dir or os.getenv('LOG_DIR', 'logs')
+    log_name: str,
+    log_dir: str = "/app/logs",  # Changed to absolute path
+    log_level: int = logging.INFO,
+    rotation_size: int = 10 * 1024 * 1024,  # 10MB
+    backup_count: int = 5,
+    console_output: bool = True,
+    console_level: int = logging.INFO
+) -> logging.Logger:
+    """
+    Set up logging configuration with file and console handlers.
     
-    # Get log level from environment or use default
-    log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
-    log_level = getattr(logging, log_level_str, logging.INFO)
-
-    # Create logs directory
-    log_path = Path(log_dir)
-    log_path.mkdir(exist_ok=True)
-
+    Args:
+        log_name: Name of the logger
+        log_dir: Directory to store log files (default: /app/logs)
+        log_level: Logging level for file handler
+        rotation_size: Maximum size of log file before rotation
+        backup_count: Number of backup files to keep
+        console_output: Whether to output logs to console
+        console_level: Logging level for console handler
+        
+    Returns:
+        Configured logger instance
+    """
+    # Create logs directory if it doesn't exist
+    os.makedirs(log_dir, exist_ok=True)
+    
     # Create logger
     logger = logging.getLogger(log_name)
     logger.setLevel(log_level)
-
-    # Clear existing handlers to avoid duplicates
-    if logger.handlers:
-        logger.handlers = []
-
-    # Add sensitive data filter
-    logger.addFilter(SensitiveDataFilter())
-
-    # Detailed formatter for debugging
-    detailed_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - [%(threadName)s] - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+    
+    # Clear any existing handlers
+    logger.handlers = []
+    
+    # Create formatters
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-
-    # File handler with rotation
+    console_formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    # Create file handler
+    log_file = os.path.join(log_dir, f"{log_name}.log")
     file_handler = logging.handlers.RotatingFileHandler(
-        log_path / f"{log_name}.log",
+        log_file,
         maxBytes=rotation_size,
-        backupCount=backup_count,
-        encoding='utf-8'
+        backupCount=backup_count
     )
-    file_handler.setFormatter(detailed_formatter)
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
-
-    # Console handler (optional)
+    
+    # Create console handler if requested
     if console_output:
         console_handler = logging.StreamHandler()
         console_handler.setLevel(console_level)
-        console_handler.setFormatter(detailed_formatter)
+        console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
-
+    
     # Log initial configuration
-    logger.info(f"Logging configured - Level: {log_level_str}, Directory: {log_dir}")
-    logger.debug("Debug logging enabled")
-
+    logger.info(f"Logging configured for {log_name}")
+    logger.info(f"Log file: {log_file}")
+    logger.info(f"Log level: {logging.getLevelName(log_level)}")
+    
     return logger
 
 
@@ -112,4 +118,4 @@ def log_structured(logger, level, message, data=None, **kwargs):
 
 
 # Create default application logger
-app_logger = setup_logging()
+app_logger = setup_logging("app")

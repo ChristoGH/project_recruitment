@@ -109,3 +109,19 @@ Recent changes to support multiple jobs per URL:
    - Enhanced job insertion logic
    - Added job title retrieval functionality
    - Updated transaction handling for multiple jobs
+
+## Known Issues and Solutions
+
+### Uvicorn Configuration Issue
+The URL Processing Service was experiencing startup issues due to an invalid uvicorn flag in the Dockerfile. The `--no-reload` flag was causing the service to fail to start properly. This has been fixed by removing the invalid flag from the Dockerfile.processing.
+
+The correct uvicorn command in the Dockerfile should be:
+```bash
+CMD ["uvicorn", "url_processing_service:app", "--host", "0.0.0.0", "--port", "8001", "--log-level", "debug", "--no-access-log"]
+```
+
+### Running Services Locally
+When running the services locally (outside of Docker), you need to set the PYTHONPATH to include the project root directory:
+```bash
+PYTHONPATH=$PYTHONPATH:. python3 recruitment/url_processing_service.py
+```
