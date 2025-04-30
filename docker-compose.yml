@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   rabbitmq:
     image: rabbitmq:3-management
@@ -33,20 +31,22 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    volumes:
+      - recruitment_data:/app/databases
+      - recruitment_logs:/app/logs
 
   url_processing:
     build:
       context: .
       dockerfile: docker/processing.Dockerfile
-    command: python -m recruitment.services.processing.url_processing_service
+    command: uvicorn recruitment.services.processing.url_processing_service:app --host 0.0.0.0 --port 8001
     ports:
       - "8001:8001"
     environment:
-      - RABBIT_HOST=rabbitmq
-      - RABBIT_PORT=5672
-      - RABBIT_USER=guest
-      - RABBIT_PASSWORD=guest
-      - RABBIT_VHOST=/
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -55,6 +55,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    volumes:
+      - recruitment_data:/app/databases
+      - recruitment_logs:/app/logs
 
 volumes:
   recruitment_data:

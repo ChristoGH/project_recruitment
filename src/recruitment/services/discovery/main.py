@@ -53,13 +53,16 @@ class SearchConfig(BaseModel):
     excluded_domains: List[str] = []
     academic_suffixes: List[str] = []
     recruitment_terms: List[str] = [
-        '"recruitment advert"',
-        '"job vacancy"',
-        '"hiring now"',
-        '"employment opportunity"',
-        '"career opportunity"',
-        '"job advertisement"',
-        '"recruitment drive"'
+        "site:careers24.com job",
+        "site:pnet.co.za job",
+        "site:indeed.co.za job",
+        "site:jobmail.co.za job",
+        "site:careerjunction.co.za job",
+        "site:jobvine.co.za job",
+        "site:joburg.co.za job",
+        "site:joburg.co.za vacancy",
+        "site:joburg.co.za recruitment",
+        "site:joburg.co.za hiring"
     ]
     batch_size: int = 100
     search_interval_minutes: int = 60
