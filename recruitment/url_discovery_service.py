@@ -14,17 +14,18 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
 from googlesearch import search
-from functools import lru_cache
 from pydantic import BaseModel
 from fastapi import FastAPI, BackgroundTasks, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-import pika
 import asyncio
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import uuid
+import aio_pika
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from recruitment.logging_config import setup_logging
+from recruitment.rabbitmq_utils import get_channel, RABBIT_QUEUE
 
 # Load environment variables
 load_dotenv()
@@ -47,8 +48,8 @@ class SearchConfig(BaseModel):
         '"job advertisement"',
         '"recruitment drive"'
     ]
-    batch_size: int = 100  # New field for controlling batch size
-    search_interval_minutes: int = 60  # New field for controlling search interval
+    batch_size: int = 100
+    search_interval_minutes: int = 60
 
 class SearchResponse(BaseModel):
     search_id: str
@@ -63,81 +64,7 @@ class SearchStatus(BaseModel):
     timestamp: str
 
 # Global variables
-rabbitmq_connection = None
-rabbitmq_channel = None
 search_results: Dict[str, Dict] = {}
-
-def get_rabbitmq_connection():
-    """Get a connection to RabbitMQ."""
-    try:
-        rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
-        rabbitmq_port = int(os.getenv("RABBITMQ_PORT", "5672"))
-        rabbitmq_user = os.getenv("RABBITMQ_USER", "guest")
-        rabbitmq_password = os.getenv("RABBITMQ_PASSWORD", "guest")
-        
-        credentials = pika.PlainCredentials(rabbitmq_user, rabbitmq_password)
-        parameters = pika.ConnectionParameters(
-            host=rabbitmq_host,
-            port=rabbitmq_port,
-            credentials=credentials,
-            heartbeat=600,
-            blocked_connection_timeout=300
-        )
-        
-        connection = pika.BlockingConnection(parameters)
-        return connection
-    except Exception as e:
-        logger.error(f"Failed to connect to RabbitMQ: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to connect to RabbitMQ: {str(e)}")
-
-def get_or_create_rabbitmq_connection():
-    """Get existing RabbitMQ connection or create a new one."""
-    global rabbitmq_connection, rabbitmq_channel
-    
-    try:
-        if not rabbitmq_connection or rabbitmq_connection.is_closed:
-            rabbitmq_connection = get_rabbitmq_connection()
-            rabbitmq_channel = rabbitmq_connection.channel()
-            queue_name = "recruitment_urls"
-            rabbitmq_channel.queue_declare(queue=queue_name, durable=True)
-            
-        return rabbitmq_connection, rabbitmq_channel
-        
-    except Exception as e:
-        logger.error(f"Error creating RabbitMQ connection: {e}")
-        if rabbitmq_connection and not rabbitmq_connection.is_closed:
-            rabbitmq_connection.close()
-        rabbitmq_connection = None
-        rabbitmq_channel = None
-        raise
-
-async def publish_urls_to_queue(urls: List[str], search_id: str):
-    """Publish URLs to RabbitMQ queue."""
-    try:
-        connection, channel = get_or_create_rabbitmq_connection()
-        queue_name = "recruitment_urls"
-        
-        for url in urls:
-            message = {
-                "url": url,
-                "search_id": search_id,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            channel.basic_publish(
-                exchange="",
-                routing_key=queue_name,
-                body=json.dumps(message),
-                properties=pika.BasicProperties(
-                    delivery_mode=2,  # make message persistent
-                )
-            )
-            
-        logger.info(f"Published {len(urls)} URLs to RabbitMQ queue")
-        
-    except Exception as e:
-        logger.error(f"Error publishing to RabbitMQ queue: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to publish URLs: {str(e)}")
 
 def is_valid_url(url: str) -> bool:
     """Validate URL format and structure."""
@@ -190,7 +117,6 @@ class RecruitmentAdSearch:
         logger.info(f"Constructed query: {final_query}")
         return final_query
 
-    @lru_cache(maxsize=100)
     def fetch_ads_with_retry(self, query: str, max_results: int = 200, max_retries: int = 3) -> List[str]:
         """Fetch articles with retry logic for transient failures."""
         articles = []
@@ -215,6 +141,9 @@ class RecruitmentAdSearch:
                 for term in self.recruitment_terms:
                     term_results = [url for url in articles if term.lower() in url.lower()]
                     logger.info(f"Found {len(term_results)} results for term: {term}")
+                
+                if len(articles) == 0:
+                    logger.warning(f"No results found for query: {query}")
                 
                 return articles
                 
@@ -246,6 +175,27 @@ class RecruitmentAdSearch:
         logger.info(f"Retrieved {len(ads)} recruitment ads in the past {self.days_back} day(s).")
         
         return ads
+
+async def publish_urls_to_queue(urls: List[str], search_id: str):
+    """Publish URLs to RabbitMQ queue."""
+    try:
+        ch = await get_channel()
+        for url in urls:
+            await ch.default_exchange.publish(
+                aio_pika.Message(
+                    body=json.dumps({
+                        "url": url,
+                        "search_id": search_id,
+                        "timestamp": datetime.now().isoformat()
+                    }).encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                ),
+                routing_key=RABBIT_QUEUE,
+            )
+        logger.info(f"Published {len(urls)} URLs to RabbitMQ queue")
+    except Exception as e:
+        logger.error(f"Error publishing to RabbitMQ queue: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to publish URLs: {str(e)}")
 
 async def perform_search(search_config: SearchConfig, background_tasks: BackgroundTasks) -> SearchResponse:
     """Perform a search for recruitment URLs."""
@@ -280,38 +230,33 @@ async def perform_search(search_config: SearchConfig, background_tasks: Backgrou
 
 async def perform_scheduled_search(search_config: SearchConfig):
     """Perform scheduled search for recruitment URLs."""
-    while True:
-        try:
-            logger.info(f"Starting scheduled search with config: {search_config.id}")
-            search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            
-            search_results[search_id] = {
-                "status": "pending",
-                "urls_found": 0,
-                "urls": [],
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            searcher = RecruitmentAdSearch(search_config)
-            urls = searcher.get_recent_ads()
-            
-            # Limit URLs to batch size
-            urls = urls[:search_config.batch_size]
-            
-            search_results[search_id]["urls"] = urls
-            search_results[search_id]["urls_found"] = len(urls)
-            
-            # Publish URLs to queue
-            await publish_urls_to_queue(urls, search_id)
-            
-            logger.info(f"Completed scheduled search. Found {len(urls)} URLs.")
-            
-            # Wait for the specified interval
-            await asyncio.sleep(search_config.search_interval_minutes * 60)
-            
-        except Exception as e:
-            logger.error(f"Error in scheduled search: {e}")
-            await asyncio.sleep(60)  # Wait 1 minute before retrying
+    try:
+        logger.info(f"Starting scheduled search with config: {search_config.id}")
+        search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        search_results[search_id] = {
+            "status": "pending",
+            "urls_found": 0,
+            "urls": [],
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        searcher = RecruitmentAdSearch(search_config)
+        urls = searcher.get_recent_ads()
+        
+        # Limit URLs to batch size
+        urls = urls[:search_config.batch_size]
+        
+        search_results[search_id]["urls"] = urls
+        search_results[search_id]["urls_found"] = len(urls)
+        
+        # Publish URLs to queue
+        await publish_urls_to_queue(urls, search_id)
+        
+        logger.info(f"Completed scheduled search. Found {len(urls)} URLs.")
+        
+    except Exception as e:
+        logger.error(f"Error in scheduled search: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -322,16 +267,21 @@ async def lifespan(app: FastAPI):
         batch_size=100,
         search_interval_minutes=60
     )
-    search_task = asyncio.create_task(perform_scheduled_search(search_config))
+    
+    # Initialize scheduler
+    sched = AsyncIOScheduler()
+    sched.add_job(
+        perform_scheduled_search,
+        "interval",
+        minutes=search_config.search_interval_minutes,
+        args=[search_config],
+    )
+    sched.start()
     
     yield
     
     # Cleanup
-    search_task.cancel()
-    try:
-        await search_task
-    except asyncio.CancelledError:
-        pass
+    sched.shutdown()
 
 app = FastAPI(
     title="URL Discovery Service",
@@ -378,9 +328,8 @@ async def get_search_urls(search_id: str):
 async def health_check():
     """Health check endpoint for Docker healthcheck."""
     try:
-        connection = get_rabbitmq_connection()
-        if connection and not connection.is_closed:
-            connection.close()
+        ch = await get_channel()
+        if ch and not ch.is_closed:
             return {"status": "healthy", "rabbitmq": "connected"}
         return {"status": "unhealthy", "rabbitmq": "disconnected"}
     except Exception as e:
