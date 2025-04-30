@@ -6,7 +6,7 @@ import re
 import logging
 from datetime import datetime
 
-from recruitment.logging_config import setup_logging
+from src.recruitment.logging_config import setup_logging
 
 # Create module-specific logger
 logger = setup_logging("recruitment_models")
@@ -440,4 +440,28 @@ def transform_skills_response(response_data: Union[Dict[str, Any], BaseModel]) -
 
 # Modification to batch_processor.py
 # Replace the process_skills function with this improved version:
+
+
+class URLDiscoveryConfig(BaseModel):
+    search_terms: List[str]
+    max_results: int = Field(default=10, gt=0)
+    interval_minutes: int = Field(default=60, gt=0)
+
+
+class URLProcessingConfig(BaseModel):
+    max_concurrent_requests: int = Field(default=5, gt=0)
+    request_timeout: int = Field(default=30, gt=0)
+    retry_attempts: int = Field(default=3, ge=0)
+
+
+class URLProcessingResult(BaseModel):
+    url: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    skills: List[str] = Field(default_factory=list)
+    company: Optional[str] = None
+    location: Optional[str] = None
+    salary_range: Optional[str] = None
+    job_type: Optional[str] = None
+    error: Optional[str] = None
 

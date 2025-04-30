@@ -1,5 +1,7 @@
 """
-URL Processing Service
+URL Processing Service package.
+"""
 
-Consumes URLs from the message queue, processes them, and stores the results.
-""" 
+from .main import URLProcessingService
+
+__all__ = ["URLProcessingService"] 

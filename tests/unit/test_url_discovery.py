@@ -1,6 +1,7 @@
 import pytest
-from recruitment.services.discovery.main import URLDiscoveryService
-from recruitment.models.url_models import URLDiscoveryConfig
+from unittest.mock import AsyncMock, MagicMock, patch
+from src.recruitment.services.discovery.main import URLDiscoveryService
+from src.recruitment.models.url_models import URLDiscoveryConfig
 
 @pytest.fixture
 def discovery_service():

@@ -21,7 +21,7 @@ from recruitment.web_crawler_lib import crawl_website_sync, WebCrawlerResult
 from recruitment.recruitment_db import init_db, save_raw_content
 
 # Setup logging
-logger = setup_logging(__name__)
+logger = setup_logging("url_discovery")
 
 app = FastAPI()
 

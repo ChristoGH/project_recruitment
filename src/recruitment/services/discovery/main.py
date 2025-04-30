@@ -23,12 +23,14 @@ from contextlib import asynccontextmanager
 import uuid
 import aio_pika
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from pathlib import Path
 
-from .logging_config import setup_logging
-from .rabbitmq_utils import get_rabbitmq_connection, RABBIT_QUEUE
-from .recruitment_models import transform_skills_response
-from .web_crawler_lib import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
-from .recruitment_db import RecruitmentDatabase
+from src.recruitment.logging_config import setup_logging
+from src.recruitment.rabbitmq_utils import RabbitMQConnection, get_rabbitmq_connection, RABBIT_QUEUE
+from src.recruitment.models.url_models import URLDiscoveryConfig
+from src.recruitment.models import transform_skills_response
+from src.recruitment.web_crawler_lib import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
+from src.recruitment.recruitment_db import RecruitmentDatabase
 
 # Load environment variables
 load_dotenv()
@@ -36,8 +38,11 @@ load_dotenv()
 # Create module-specific logger
 logger = setup_logging(__name__)
 
+# Get the absolute path to the project root
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+DB_PATH = str(PROJECT_ROOT / "databases" / "recruitment.db")
+
 # Initialize database
-DB_PATH = os.getenv("DB_PATH", "/app/databases/recruitment.db")
 db = RecruitmentDatabase(DB_PATH)
 db.initialize()
 
@@ -357,6 +362,28 @@ async def health_check():
         return {"status": "unhealthy", "rabbitmq": "disconnected"}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
+
+class URLDiscoveryService:
+    def __init__(self, config: URLDiscoveryConfig, rabbitmq: RabbitMQConnection):
+        self.config = config
+        self.rabbitmq = rabbitmq
+        self.logger = setup_logging(__name__)
+
+    async def discover_urls(self) -> List[str]:
+        """Discover URLs based on configuration."""
+        searcher = RecruitmentAdSearch(SearchConfig(
+            id="discovery_service",
+            days_back=7,
+            batch_size=self.config.max_results,
+            search_interval_minutes=self.config.interval_minutes
+        ))
+        return searcher.get_recent_ads()
+
+    async def publish_urls(self, urls: List[str]) -> None:
+        """Publish URLs to RabbitMQ queue."""
+        for url in urls:
+            await self.rabbitmq.publish_url(url)
+        self.logger.info(f"Published {len(urls)} URLs to queue")
 
 if __name__ == "__main__":
     import uvicorn

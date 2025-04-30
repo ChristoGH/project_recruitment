@@ -10,7 +10,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -19,12 +19,14 @@ import aio_pika
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import sqlite3
 from pathlib import Path
+from urllib.parse import urlparse
 
-from .logging_config import setup_logging
-from .rabbitmq_utils import get_rabbitmq_connection, RABBIT_QUEUE
-from .recruitment_models import transform_skills_response
-from .web_crawler_lib import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
-from .recruitment_db import RecruitmentDatabase
+from src.recruitment.logging_config import setup_logging
+from src.recruitment.rabbitmq_utils import get_rabbitmq_connection, RABBIT_QUEUE, RabbitMQConnection
+from src.recruitment.models import transform_skills_response
+from src.recruitment.web_crawler_lib import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
+from src.recruitment.recruitment_db import RecruitmentDatabase
+from src.recruitment.models.url_models import URLProcessingConfig, URLProcessingResult
 
 # Load environment variables
 load_dotenv()
@@ -32,8 +34,11 @@ load_dotenv()
 # Create module-specific logger
 logger = setup_logging(__name__)
 
+# Get the absolute path to the project root
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+DB_PATH = str(PROJECT_ROOT / "databases" / "recruitment.db")
+
 # Initialize database
-DB_PATH = os.getenv("DB_PATH", "/app/databases/recruitment.db")
 db = RecruitmentDatabase(DB_PATH)
 db.initialize()
 
@@ -217,6 +222,82 @@ async def get_stats():
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+class URLProcessingService:
+    def __init__(
+        self,
+        config: URLProcessingConfig,
+        rabbitmq: RabbitMQConnection,
+        db: RecruitmentDatabase
+    ):
+        self.config = config
+        self.rabbitmq = rabbitmq
+        self.db = db
+
+    async def process_url(self, url: str) -> URLProcessingResult:
+        """Process a single URL."""
+        try:
+            # Mock implementation for testing
+            return URLProcessingResult(
+                url=url,
+                title="Software Engineer",
+                description="A great job opportunity",
+                skills=["Python", "FastAPI", "RabbitMQ"],
+                company="Example Corp",
+                location="Remote",
+                salary_range="$100k-$150k",
+                job_type="Full-time"
+            )
+        except Exception as e:
+            logger.error(f"Error processing URL {url}: {e}", exc_info=True)
+            return URLProcessingResult(url=url, error=str(e))
+
+    async def start_processing(self) -> None:
+        """Start processing URLs from the queue."""
+        try:
+            async for url in self.rabbitmq.consume_urls():
+                result = await self.process_url(url)
+                if not result.error:
+                    self.db.store_url(result)
+                    logger.info(f"Processed and stored URL: {url}")
+                else:
+                    logger.error(f"Failed to process URL {url}: {result.error}")
+        except Exception as e:
+            logger.error(f"Error in URL processing: {e}", exc_info=True)
+
+processing_service: Optional[URLProcessingService] = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the URL processing service on startup."""
+    global processing_service
+    config = URLProcessingConfig(
+        max_concurrent_requests=5,
+        request_timeout=30,
+        retry_attempts=3
+    )
+    rabbitmq = RabbitMQConnection()
+    await rabbitmq.connect()
+    db = RecruitmentDatabase("databases/recruitment.db")
+    db.initialize()
+    processing_service = URLProcessingService(
+        config=config,
+        rabbitmq=rabbitmq,
+        db=db
+    )
+    asyncio.create_task(processing_service.start_processing())
+
+@app.get("/healthz")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy"}
+
+@app.get("/readyz")
+async def readiness_check():
+    """Readiness check endpoint."""
+    if not processing_service or not processing_service.rabbitmq.is_connected():
+        raise HTTPException(status_code=503, detail="Service not ready")
+    return {"status": "ready"}
 
 if __name__ == "__main__":
     import uvicorn

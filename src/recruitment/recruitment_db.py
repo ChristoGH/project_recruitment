@@ -14,12 +14,18 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterator, Union, Tuple
-from recruitment.logging_config import setup_logging
+from src.recruitment.logging_config import setup_logging
 from dotenv import load_dotenv
 import threading
 
 # Load environment variables
 load_dotenv()
+
+# Get the absolute path to the project root
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+DB_PATH = str(PROJECT_ROOT / "databases" / "recruitment.db")
+
+logger = logging.getLogger(__name__)
 
 class DatabaseError(Exception):
     """Custom exception for database-related errors."""
@@ -31,7 +37,7 @@ class RecruitmentDatabase:
     and robust connection management.
     """
 
-    def __init__(self, db_path: str = "databases/recruitment.db"):
+    def __init__(self, db_path: str = DB_PATH):
         """Initialize the database connection."""
         self.db_path = db_path
         self.logger = setup_logging("recruitment_db")
@@ -42,6 +48,8 @@ class RecruitmentDatabase:
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection with proper settings."""
         try:
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
             self.logger.debug(f"Connecting to database at {self.db_path}")
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row

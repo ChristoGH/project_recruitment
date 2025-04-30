@@ -1,9 +1,10 @@
 import pytest
 import asyncio
-from recruitment.services.discovery.main import URLDiscoveryService
-from recruitment.services.processing.main import URLProcessingService
-from recruitment.models.url_models import URLDiscoveryConfig, URLProcessingConfig
-from recruitment.rabbitmq_utils import RabbitMQConnection
+from unittest.mock import AsyncMock, MagicMock
+from src.recruitment.services.discovery.main import URLDiscoveryService
+from src.recruitment.services.processing.main import URLProcessingService
+from src.recruitment.models.url_models import URLDiscoveryConfig, URLProcessingConfig
+from src.recruitment.rabbitmq_utils import RabbitMQConnection
 
 @pytest.fixture
 async def rabbitmq_connection():

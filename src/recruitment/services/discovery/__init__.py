@@ -1,5 +1,7 @@
 """
-URL Discovery Service
+URL Discovery Service package.
+"""
 
-Discovers recruitment URLs and publishes them to a message queue.
-""" 
+from .main import URLDiscoveryService
+
+__all__ = ["URLDiscoveryService"] 

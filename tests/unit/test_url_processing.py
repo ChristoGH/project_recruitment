@@ -1,6 +1,8 @@
 import pytest
-from recruitment.services.processing.main import URLProcessingService
-from recruitment.models.url_models import URLProcessingConfig
+from unittest.mock import AsyncMock, MagicMock
+from src.recruitment.services.processing.main import URLProcessingService
+from src.recruitment.models.url_models import URLProcessingConfig, URLProcessingResult
+from src.recruitment.models.db_models import JobPosting
 
 @pytest.fixture
 def processing_service():

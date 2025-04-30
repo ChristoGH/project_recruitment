@@ -6,6 +6,11 @@ from pathlib import Path
 import json
 from logging.handlers import RotatingFileHandler
 from typing import Optional
+import sys
+import structlog
+
+# Get the project root directory
+project_root = Path(__file__).parent.parent.parent
 
 
 class SensitiveDataFilter(logging.Filter):
@@ -23,51 +28,57 @@ class SensitiveDataFilter(logging.Filter):
         return True
 
 
-def setup_logging(
-    log_name: str,
-    log_level: int = logging.INFO,
-    log_dir: str = "/app/logs"
-) -> logging.Logger:
-    """
-    Set up logging configuration for a module.
+def setup_logging(name: str, level: str = None) -> logging.Logger:
+    """Set up logging configuration."""
+    # Get log level from environment variable or use default
+    log_level = level or os.getenv("LOG_LEVEL", "INFO")
     
-    Args:
-        log_name: Name of the logger (usually __name__)
-        log_level: Logging level (default: INFO)
-        log_dir: Directory to store log files (default: /app/logs)
+    # Get log directory from environment variable or use default
+    log_dir = os.getenv("LOG_DIR", str(project_root / "logs"))
     
-    Returns:
-        logging.Logger: Configured logger instance
-    """
     # Create logs directory if it doesn't exist
     os.makedirs(log_dir, exist_ok=True)
     
     # Create logger
-    logger = logging.getLogger(log_name)
+    logger = logging.getLogger(name)
     logger.setLevel(log_level)
     
-    # Create formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - [%(threadName)s] - %(message)s'
+    # Remove existing handlers
+    logger.handlers = []
+    
+    # Create formatters
+    file_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.processors.JSONRenderer(),
+        foreign_pre_chain=[
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+        ]
+    )
+    
+    console_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - [%(threadName)s] - %(message)s"
     )
     
     # Create file handler
-    log_file = os.path.join(log_dir, f"{log_name}.log")
+    log_file = os.path.join(log_dir, f"{name}.log")
     file_handler = RotatingFileHandler(
         log_file,
-        maxBytes=10*1024*1024,  # 10MB
+        maxBytes=10485760,  # 10MB
         backupCount=5
     )
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
     
     # Create console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
     
-    logger.info(f"Logging configured - Level: {logging.getLevelName(log_level)}, Directory: {log_dir}")
-    if log_level == logging.DEBUG:
+    # Log debug message if debug logging is enabled
+    if log_level.upper() == "DEBUG":
         logger.debug("Debug logging enabled")
     
     return logger
@@ -101,5 +112,5 @@ def log_structured(logger, level, message, data=None, **kwargs):
         logger.critical(message)
 
 
-# Create default application logger
+# Create a default logger for the application
 app_logger = setup_logging("app")
