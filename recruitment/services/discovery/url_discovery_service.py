@@ -84,9 +84,9 @@ async def get_recruitment_urls() -> List[str]:
 async def publish_urls_to_queue(urls: List[str], search_id: str):
     """Publish URLs to RabbitMQ queue."""
     try:
-        ch = await get_rabbitmq_connection()
+        channel = await get_rabbitmq_connection()
         for url in urls:
-            await ch.default_exchange.publish(
+            await channel.default_exchange.publish(
                 aio_pika.Message(
                     body=json.dumps({
                         "url": url,
@@ -99,7 +99,7 @@ async def publish_urls_to_queue(urls: List[str], search_id: str):
             )
         logger.info(f"Published {len(urls)} URLs to RabbitMQ queue")
     except Exception as e:
-        logger.error(f"Error publishing to RabbitMQ queue: {e}")
+        logger.error(f"Failed to publish URLs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to publish URLs: {str(e)}")
 
 async def perform_search(background_tasks: BackgroundTasks):

@@ -27,4 +27,4 @@ ENV PYTHONUNBUFFERED=1
 RUN mkdir -p /app/logs /data /app/databases
 
 # Run the service
-CMD ["python", "recruitment/url_discovery_service.py"] 
+CMD ["python", "-m", "recruitment.services.discovery.url_discovery_service"] 
