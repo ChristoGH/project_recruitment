@@ -1,0 +1,43 @@
+name: test-build
+
+on: [push, pull_request]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          
+      - name: Install uv
+        run: pip install uv
+      
+      - name: Install dependencies
+        run: |
+          uv venv .venv
+          source .venv/bin/activate
+          uv pip install -e ".[dev]"
+          uv pip install -r requirements.lock
+      
+      - name: Run tests
+        run: pytest -q
+      
+      - name: Build Docker images
+        run: docker compose -f docker-compose.yml build --parallel
+      
+      - name: Start services
+        run: docker compose up -d
+      
+      - name: Run smoke test
+        run: ./scripts/ci_smoke_test.sh
+      
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v 

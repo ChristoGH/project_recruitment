@@ -1,3 +1,3 @@
 """
-Recruitment package for processing job postings.
+Recruitment package for processing recruitment-related data.
 """ 

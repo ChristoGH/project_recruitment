@@ -1,48 +1,30 @@
-FROM python:3.11-slim as builder
+FROM python:3.11-slim
 
 WORKDIR /app
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-RUN pip install --user playwright && python -m playwright install --with-deps chromium
-
-# Final stage
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+    gcc \
+    python3-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python packages and Playwright browser from builder
-COPY --from=builder /root/.local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy only necessary files
-COPY recruitment/url_discovery_service.py .
-COPY recruitment/logging_config.py .
-COPY libraries ./libraries
-COPY recruitment/prompts.py .
-COPY recruitment/recruitment_models.py .
-COPY recruitment/utils.py .
-COPY recruitment ./recruitment
+# Copy the entire project
+COPY . .
 
-# Create logs directory and set up log files
-RUN mkdir -p /app/logs /app/databases && \
-    touch /app/logs/startup.log /app/logs/url_discovery_service.log && \
-    touch /app/databases/recruitment.db && \
-    chmod 666 /app/logs/*.log /app/databases/recruitment.db
+# Install the package in editable mode
+RUN pip install --no-cache-dir -e .
 
-# Expose port
-EXPOSE 8000
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
 
-# Start the FastAPI service
-CMD ["python", "-m", "uvicorn", "url_discovery_service:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Create necessary directories
+RUN mkdir -p /app/logs /data /app/databases
+
+# Run the service
+CMD ["python", "recruitment/url_discovery_service.py"] 

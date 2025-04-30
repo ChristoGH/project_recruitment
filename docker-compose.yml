@@ -1,29 +1,27 @@
 version: '3.8'
 
 services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports: ["5672:5672", "15672:15672"]
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      retries: 5
+
   url_discovery:
     build:
       context: .
-      dockerfile: Dockerfile.discovery
-    ports:
-      - "8000:8000"
+      dockerfile: docker/discovery.Dockerfile
+    env_file: .env
     environment:
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - RABBITMQ_USER=guest
-      - RABBITMQ_PASSWORD=guest
-      - LOG_LEVEL=DEBUG
-      - LOG_DIR=/app/logs
-    volumes:
-      - ./logs:/app/logs
-      - ./databases:/app/databases
+      RABBITMQ_HOST: rabbitmq
     depends_on:
       rabbitmq:
         condition: service_healthy
-    networks:
-      - recruitment_network
+    ports: ["8000:8000"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -31,51 +29,24 @@ services:
   url_processing:
     build:
       context: .
-      dockerfile: Dockerfile.processing
-    ports:
-      - "8001:8001"
+      dockerfile: docker/processing.Dockerfile
+    env_file: .env
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - RABBITMQ_USER=guest
-      - RABBITMQ_PASSWORD=guest
-      - RECRUITMENT_PATH=/app/databases/recruitment.db
-      - LOG_LEVEL=DEBUG
-      - LOG_DIR=/app/logs
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./logs:/app/logs
-      - ./databases:/app/databases
+      RABBITMQ_HOST: rabbitmq
     depends_on:
       rabbitmq:
         condition: service_healthy
-    networks:
-      - recruitment_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - recruitment_network
+      - recruitment_data:/app/databases
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
 
 volumes:
-  rabbitmq_data:
+  recruitment_data:
+  recruitment_logs:
 
 networks:
   recruitment_network:

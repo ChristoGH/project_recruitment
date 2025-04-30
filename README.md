@@ -1,3 +1,163 @@
+# Recruitment URL Discovery and Processing Pipeline
+
+A production-ready system for discovering and processing recruitment URLs. This system consists of two main services:
+
+1. **URL Discovery Service**: Discovers recruitment URLs from various sources and publishes them to a message queue.
+2. **URL Processing Service**: Consumes URLs from the queue, processes them, and stores the results in a database.
+
+## Features
+
+- Asynchronous URL discovery and processing
+- Message queue-based communication (RabbitMQ)
+- Structured logging
+- Health checks and readiness probes
+- Containerized deployment
+- Comprehensive test suite
+- CI/CD pipeline
+
+## Project Structure
+
+```text
+project_recruitment/
+│
+├─ README.md                  ← this file
+├─ .env.example               ← all configurable env-vars with safe defaults
+├─ .dockerignore
+├─ docker-compose.yml
+├─ requirements.lock          ← frozen hashes, built with `uv pip compile`
+├─ pyproject.toml             ← PEP 621 metadata + dependencies
+│
+├─ src/                       ← single installable package
+│  └─ recruitment/
+│     ├─ __init__.py
+│     │
+│     ├─ logging_config.py    ← shared structured-logging setup
+│     ├─ rabbitmq_utils.py    ← one async helper for channel/queue
+│     ├─ recruitment_db.py    ← SQLite → Postgres adapter
+│     ├─ web_crawler_lib.py   ← sync/async scraping utilities
+│     │
+│     ├─ models/              ← pydantic schemas / DTOs
+│     │   ├─ __init__.py
+│     │   └─ url_models.py
+│     │
+│     └─ services/
+│        ├─ discovery/
+│        │   ├─ __init__.py
+│        │   ├─ main.py       ← `python -m recruitment.services.discovery`
+│        │   └─ scheduler.py  ← APScheduler hourly job
+│        └─ processing/
+│            ├─ __init__.py
+│            └─ main.py       ← consumer → crawl → db
+│
+├─ docker/
+│  ├─ discovery.Dockerfile    ← base python:3.12-slim, non-root user
+│  └─ processing.Dockerfile
+│
+├─ tests/
+│  ├─ unit/                   ← no external services
+│  ├─ integration/            ← spins up RabbitMQ & SQLite in tmp dir
+│  └─ e2e/                    ← calls running compose stack
+│
+├─ scripts/
+│  ├─ ci_smoke_test.sh        ← waits for /healthz then checks DB row count
+│  └─ migrate_db.py           ← future migrations
+│
+└─ ci/
+   └─ github_actions.yml
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.12+
+- Docker and Docker Compose
+- RabbitMQ (managed via Docker)
+
+### Local Development
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/your-org/project_recruitment.git
+   cd project_recruitment
+   ```
+
+2. Create and activate a virtual environment:
+   ```bash
+   uv venv .venv
+   source .venv/bin/activate
+   ```
+
+3. Install dependencies:
+   ```bash
+   uv pip install -e ".[dev]"
+   uv pip install -r requirements.lock
+   ```
+
+4. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+
+5. Start the services:
+   ```bash
+   docker compose up -d
+   ```
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run unit tests only
+pytest tests/unit
+
+# Run integration tests
+pytest tests/integration
+
+# Run e2e tests
+pytest tests/e2e
+```
+
+## Deployment
+
+The system is designed to be deployed using Docker Compose. The `docker-compose.yml` file defines three services:
+
+1. `rabbitmq`: Message queue for communication between services
+2. `url_discovery`: Service for discovering recruitment URLs
+3. `url_processing`: Service for processing discovered URLs
+
+To deploy:
+
+```bash
+docker compose up -d
+```
+
+## Monitoring
+
+Both services expose health check endpoints:
+
+- Discovery Service: `http://localhost:8000/healthz`
+- Processing Service: `http://localhost:8001/healthz`
+
+And readiness probes:
+
+- Discovery Service: `http://localhost:8000/readyz`
+- Processing Service: `http://localhost:8001/readyz`
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
 ## URL Processing Dashboard
 
 The URL Processing Dashboard is a Streamlit application that allows you to monitor and manually process URLs from the recruitment database. It provides a step-by-step interface for processing job postings and debugging any issues that arise.

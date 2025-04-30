@@ -1,82 +1,30 @@
-FROM python:3.11-slim as builder
+FROM python:3.11-slim
 
 WORKDIR /app
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# Install Playwright in builder stage
-RUN pip install --user playwright && \
-    python -m playwright install chromium && \
-    python -m playwright install-deps
-
-# Final stage
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install only runtime dependencies required by Playwright
-RUN apt-get update && apt-get install -y \
-    libglib2.0-0 \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libdbus-1-3 \
-    libxcb1 \
-    libxkbcommon0 \
-    libx11-6 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libasound2 \
+    gcc \
+    python3-dev \
     curl \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install dependencies in final stage
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy Python packages from builder
-COPY --from=builder /root/.local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
+# Copy the entire project
+COPY . .
 
-# Copy only necessary files
-COPY recruitment/url_processing_service.py .
-COPY recruitment/logging_config.py .
-COPY libraries ./libraries
-COPY recruitment/prompts.py .
-COPY recruitment/recruitment_models.py .
-COPY recruitment/response_processor_functions.py .
-COPY recruitment/batch_processor.py .
-COPY libraries/web_crawler_lib.py .
-COPY recruitment/utils.py .
-COPY recruitment ./recruitment
+# Install the package in editable mode
+RUN pip install --no-cache-dir -e .
 
-# Create logs and data directories
-RUN mkdir -p /app/logs /data /app/databases && \
-    touch /app/databases/recruitment.db && \
-    chmod 666 /app/databases/recruitment.db
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
 
-# Add /app and /app/recruitment to PYTHONPATH
-ENV PYTHONPATH=/app:/app/recruitment
+# Create necessary directories
+RUN mkdir -p /app/logs /data /app/databases
 
-# Expose port
-EXPOSE 8001
-
-# Run the application
-CMD ["uvicorn", "url_processing_service:app", "--host", "0.0.0.0", "--port", "8001", "--log-level", "debug", "--no-access-log"] 
+# Run the service
+CMD ["python", "-m", "recruitment.services.processing.url_processing_service"] 

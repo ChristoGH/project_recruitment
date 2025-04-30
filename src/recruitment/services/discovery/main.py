@@ -24,14 +24,22 @@ import uuid
 import aio_pika
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from recruitment.logging_config import setup_logging
-from recruitment.rabbitmq_utils import get_channel, RABBIT_QUEUE
+from .logging_config import setup_logging
+from .rabbitmq_utils import get_rabbitmq_connection, RABBIT_QUEUE
+from .recruitment_models import transform_skills_response
+from .web_crawler_lib import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
+from .recruitment_db import RecruitmentDatabase
 
 # Load environment variables
 load_dotenv()
 
 # Create module-specific logger
-logger = setup_logging("url_discovery_service")
+logger = setup_logging(__name__)
+
+# Initialize database
+DB_PATH = os.getenv("DB_PATH", "/app/databases/recruitment.db")
+db = RecruitmentDatabase(DB_PATH)
+db.initialize()
 
 # Pydantic models for API
 class SearchConfig(BaseModel):
@@ -179,7 +187,7 @@ class RecruitmentAdSearch:
 async def publish_urls_to_queue(urls: List[str], search_id: str):
     """Publish URLs to RabbitMQ queue."""
     try:
-        ch = await get_channel()
+        ch = await get_rabbitmq_connection()
         for url in urls:
             await ch.default_exchange.publish(
                 aio_pika.Message(
@@ -261,27 +269,42 @@ async def perform_scheduled_search(search_config: SearchConfig):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI application."""
-    # Start scheduled search task
+    # Initialize RabbitMQ connection
+    try:
+        ch = await get_rabbitmq_connection()
+        await ch.declare_queue(RABBIT_QUEUE, durable=True)
+        logger.info("RabbitMQ queue declared successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize RabbitMQ: {e}")
+        raise
+
+    # Initialize scheduler
+    scheduler = AsyncIOScheduler()
+    scheduler.start()
+    logger.info("Scheduler started")
+
+    # Add initial search task
     search_config = SearchConfig(
-        id="scheduled_search",
+        id="initial_search",
+        days_back=7,
         batch_size=100,
         search_interval_minutes=60
     )
-    
-    # Initialize scheduler
-    sched = AsyncIOScheduler()
-    sched.add_job(
+    scheduler.add_job(
         perform_scheduled_search,
-        "interval",
+        'interval',
         minutes=search_config.search_interval_minutes,
         args=[search_config],
+        id="recruitment_search"
     )
-    sched.start()
-    
+    logger.info("Initial search task scheduled")
+
     yield
-    
+
     # Cleanup
-    sched.shutdown()
+    scheduler.shutdown()
+    if not ch.is_closed:
+        await ch.close()
 
 app = FastAPI(
     title="URL Discovery Service",
@@ -328,7 +351,7 @@ async def get_search_urls(search_id: str):
 async def health_check():
     """Health check endpoint for Docker healthcheck."""
     try:
-        ch = await get_channel()
+        ch = await get_rabbitmq_connection()
         if ch and not ch.is_closed:
             return {"status": "healthy", "rabbitmq": "connected"}
         return {"status": "unhealthy", "rabbitmq": "disconnected"}
