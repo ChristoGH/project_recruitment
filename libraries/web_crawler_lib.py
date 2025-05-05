@@ -249,9 +249,7 @@ def crawl_website_sync(
                 try:
                     # Create a new event loop for this thread
                     loop = asyncio.new_event_loop()
-                    # Don't set it as the current loop, just use it directly
                     try:
-                        # Run the coroutine in the new loop
                         result = loop.run_until_complete(
                             crawl_website(
                                 url=url,
@@ -265,12 +263,10 @@ def crawl_website_sync(
                             )
                         )
                     finally:
-                        # Clean up the loop
                         loop.close()
                 except Exception as e:
                     exception = e
 
-            # Create and start the thread
             thread = threading.Thread(target=run_in_thread)
             thread.start()
             thread.join()
@@ -279,61 +275,65 @@ def crawl_website_sync(
                 raise exception
             return result
         else:
-            # If we're not in an event loop, we can use asyncio.run
+            # If we're not in an event loop, we can run the crawler directly
             if verbose:
-                logger.debug("Using asyncio.run in the current thread")
+                logger.debug("Running in current thread with new event loop")
 
-            return asyncio.run(
-                crawl_website(
-                    url=url,
-                    word_count_threshold=word_count_threshold,
-                    excluded_tags=excluded_tags,
-                    exclude_external_links=exclude_external_links,
-                    process_iframes=process_iframes,
-                    remove_overlay_elements=remove_overlay_elements,
-                    use_cache=use_cache,
-                    verbose=verbose
+            # Create a new event loop
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(
+                    crawl_website(
+                        url=url,
+                        word_count_threshold=word_count_threshold,
+                        excluded_tags=excluded_tags,
+                        exclude_external_links=exclude_external_links,
+                        process_iframes=process_iframes,
+                        remove_overlay_elements=remove_overlay_elements,
+                        use_cache=use_cache,
+                        verbose=verbose
+                    )
                 )
-            )
+            finally:
+                loop.close()
+
     except Exception as e:
         error_details = traceback.format_exc()
         if verbose:
-            logger.error(f"Sync crawler exception: {str(e)}")
+            logger.error(f"Synchronous crawler exception: {str(e)}")
             logger.error(f"Traceback: {error_details}")
 
         return WebCrawlerResult(
             success=False,
-            error_message=f"Synchronous crawl failed with exception: {str(e)}"
+            error_message=f"Synchronous crawl failed with exception: {str(e)}",
+            url=url
         )
 
 
 def run_in_process(url: str, max_pages: int, max_depth: int, timeout: int, verbose: bool, queue: Queue) -> None:
-    """Run the crawler in a separate process."""
+    """
+    Run the crawler in a separate process and put the result in a queue.
+    """
     try:
-        # Create a new event loop for this process
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Run the crawler
-        result = loop.run_until_complete(crawl_website(
+        result = crawl_website_sync(
             url=url,
-            max_pages=max_pages,
-            max_depth=max_depth,
-            timeout=timeout,
+            word_count_threshold=10,
+            excluded_tags=['form', 'header'],
+            exclude_external_links=True,
+            process_iframes=True,
+            remove_overlay_elements=True,
+            use_cache=True,
             verbose=verbose
-        ))
-        
-        # Put the result in the queue
+        )
         queue.put(result)
     except Exception as e:
-        # Put the exception in the queue
-        queue.put(e)
-    finally:
-        # Clean up
-        try:
-            loop.close()
-        except:
-            pass
+        if verbose:
+            logger.error(f"Process error: {str(e)}")
+        queue.put(WebCrawlerResult(
+            success=False,
+            error_message=f"Process error: {str(e)}",
+            url=url
+        ))
 
 
 def crawl_website_sync_v2(
@@ -344,51 +344,48 @@ def crawl_website_sync_v2(
     verbose: bool = False
 ) -> WebCrawlerResult:
     """
-    Synchronous version of crawl_website that runs in a separate process.
-    This version is more reliable for handling event loop issues.
+    An alternative version of the synchronous crawler that uses multiprocessing
+    to handle timeouts more gracefully.
     """
     try:
-        # Create a queue for the result
-        result_queue = Queue()
-        
+        if verbose:
+            logger.debug(f"Starting v2 crawler for URL: {url}")
+
+        # Create a queue to receive the result
+        queue = Queue()
+
         # Create and start the process
         process = Process(
             target=run_in_process,
-            args=(url, max_pages, max_depth, timeout, verbose, result_queue)
+            args=(url, max_pages, max_depth, timeout, verbose, queue)
         )
         process.start()
-        
-        # Wait for the result with timeout
+
+        # Wait for the result with a timeout
         try:
-            result = result_queue.get(timeout=timeout + 5)  # Add 5 seconds buffer
+            result = queue.get(timeout=timeout)
+            process.join(timeout=1)  # Give the process a moment to clean up
+            if process.is_alive():
+                process.terminate()
+            return result
         except Empty:
-            process.terminate()
-            process.join()
-            return WebCrawlerResult(
-                success=False,
-                url=url,
-                error_message="Crawling timed out"
-            )
-        
-        # Check if we got an exception
-        if isinstance(result, Exception):
             if verbose:
-                logger.error(f"Sync crawler exception (v2): {str(result)}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
+                logger.warning(f"Crawler timed out after {timeout} seconds")
+            process.terminate()
             return WebCrawlerResult(
                 success=False,
-                url=url,
-                error_message=str(result)
+                error_message=f"Crawler timed out after {timeout} seconds",
+                url=url
             )
-        
-        return result
-        
+
     except Exception as e:
+        error_details = traceback.format_exc()
         if verbose:
-            logger.error(f"Sync crawler exception (v2): {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"v2 crawler exception: {str(e)}")
+            logger.error(f"Traceback: {error_details}")
+
         return WebCrawlerResult(
             success=False,
-            url=url,
-            error_message=str(e)
-        )
+            error_message=f"v2 crawl failed with exception: {str(e)}",
+            url=url
+        ) 

@@ -100,60 +100,94 @@ project_recruitment/
    - ✅ `test_search.py` → `tests/unit/`
 
 2. Restructure services:
-   - Move existing services into new `src/recruitment/services/` structure
-   - Create necessary `__init__.py` files
-   - Set up logging configuration
+   - ⚠️ Move existing services into new `src/recruitment/services/` structure
+     - ✅ Processing service organized in `src/recruitment/services/processing/`
+     - ✅ Discovery service organized in `src/recruitment/services/discovery/`
+       - ✅ Moved `url_discovery_service.py` to new location
+     - ✅ LLM service organized in `src/recruitment/services/llm/`
+     - ⚠️ Files still needing to be moved from old `recruitment/` directory:
+       - `web_crawler_lib.py` → `src/recruitment/utils/` (✅ Resolved - moved to correct location)
+       - `storage.py` → `src/recruitment/db/` (✅ Resolved - moved to correct location)
+       - `recruitment_models.py` → `src/recruitment/models/` (✅ Resolved - kept newer version)
+       - `recruitment_db.py` → `src/recruitment/db/` (✅ Resolved - kept newer version)
+       - `rabbitmq_utils.py` → `src/recruitment/utils/` (✅ Resolved - kept newer version)
+       - `prompts.py` → `src/recruitment/prompts/` (✅ Resolved - content already in __init__.py)
+       - `process_urls_from_queue.py` → `src/recruitment/workers/` (✅ Resolved - kept newer version)
+       - `models.py` → `src/recruitment/models/` (✅ Resolved - functionality covered by newer models)
+       - `config_validator.py` → `src/recruitment/config/` (✅ Resolved - moved to correct location)
+       - `batch_processor.py` → `src/recruitment/services/processing/` (✅ Resolved - kept newer version)
+       - `response_processor_functions.py` → `src/recruitment/services/processing/` (✅ Resolved - kept newer version)
+   - ✅ Create necessary `__init__.py`
+   - ✅ Set up logging configuration
 
 3. Database and Models:
-   - Create new `db/` directory structure
-   - Move existing database-related code
-   - Set up migrations directory
+   - ✅ Create new `db/` directory structure
+   - ✅ Move existing database-related code
+   - ⚠️ Set up migrations directory
 
 ### Phase 3: Configuration Updates
 1. Update `pyproject.toml`:
-   - Consolidate dependencies
-   - Update package configuration
-   - Configure build system
+   - ✅ Consolidate dependencies
+   - ✅ Update package configuration
+   - ✅ Configure build system
 
 2. Update Docker configurations:
-   - Verify and update Dockerfiles
-   - Update docker-compose.yml
+   - ⚠️ Verify and update Dockerfiles
+   - ⚠️ Update docker-compose.yml
 
-3. Update import statements in all files to reflect new structure
+3. Update import statements in all files to reflect new structure:
+   - ⚠️ Review and update all Python files
+   - ⚠️ Verify relative imports work correctly
+   - ⚠️ Test imports after updates
 
 ### Phase 4: Testing and Validation
 1. Reorganize tests:
-   - Move existing tests to appropriate categories
-   - Update test imports
-   - Verify test coverage
+   - ⚠️ Move existing tests to appropriate categories
+   - ⚠️ Update test imports
+   - ⚠️ Verify test coverage
 
 2. Create new test structure:
-   - Set up unit test directory
-   - Set up integration test directory
-   - Set up e2e test directory
+   - ⚠️ Set up unit test directory
+   - ⚠️ Set up integration test directory
+   - ⚠️ Set up e2e test directory
 
 ### Phase 5: Documentation and Cleanup
-1. Update README.md with new structure
-2. Remove obsolete files and directories
-3. Update .gitignore
-4. Verify all paths in configuration files
+1. Update README.md with new structure:
+   - ⚠️ Document new directory layout
+   - ⚠️ Update installation instructions
+   - ⚠️ Update development guidelines
+
+2. Remove obsolete files and directories:
+   - ⚠️ Clean up old configuration files
+   - ⚠️ Remove redundant directories
+   - ⚠️ Archive old test files
+
+3. Update .gitignore:
+   - ⚠️ Add new patterns for build artifacts
+   - ⚠️ Update database file patterns
+   - ⚠️ Add IDE-specific patterns
+
+4. Verify all paths in configuration files:
+   - ⚠️ Check Docker configurations
+   - ⚠️ Verify test paths
+   - ⚠️ Validate import paths
 
 ## Risk Mitigation
 
 1. **Backup Strategy**
-   - Create git branch before starting migration
-   - Keep original files until new structure is verified
-   - Document all changes in commits
+   - ✅ Create git branch before starting migration
+   - ⚠️ Keep original files until new structure is verified
+   - ⚠️ Document all changes in commits
 
 2. **Testing Strategy**
-   - Run tests after each major move
-   - Verify imports work in new structure
-   - Check Docker builds
+   - ⚠️ Run tests after each major move
+   - ⚠️ Verify imports work in new structure
+   - ⚠️ Check Docker builds
 
 3. **Rollback Plan**
-   - Keep original structure in separate branch
-   - Document all changes for potential rollback
-   - Test rollback procedure
+   - ✅ Keep original structure in separate branch
+   - ⚠️ Document all changes for potential rollback
+   - ⚠️ Test rollback procedure
 
 ## Success Criteria
 
@@ -166,8 +200,8 @@ project_recruitment/
 
 ## Next Steps
 
-1. Review this plan and provide feedback
-2. Create backup branch
-3. Begin with Phase 1 preparation
-4. Execute migration in small, testable steps
-5. Verify each step before proceeding 
+1. ✅ Review this plan and provide feedback
+2. ✅ Create backup branch
+3. ✅ Begin with Phase 1 preparation
+4. ⚠️ Execute migration in small, testable steps
+5. ⚠️ Verify each step before proceeding
