@@ -1,45 +1,330 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List
-import asyncio
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+#!/usr/bin/env python3
+"""
+URL Discovery Service
+
+This FastAPI service searches for recruitment URLs and publishes them to a RabbitMQ queue.
+It's based on the working recruitment_ad_search.py script.
+"""
+
 import os
+import json
 import logging
-from datetime import datetime
-import requests
-from bs4 import BeautifulSoup
-from uuid import uuid4
+import time
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
+from googlesearch import search
+from pydantic import BaseModel
+from fastapi import FastAPI, BackgroundTasks, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+from dotenv import load_dotenv
 from contextlib import asynccontextmanager
+import uuid
+import aio_pika
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from recruitment.logging_config import setup_logging
-from recruitment.rabbitmq_utils import publish_json, RABBIT_QUEUE, ensure_queue_exists
-from recruitment.recruitment_models import transform_skills_response
-from recruitment.web_crawler_lib import crawl_website_sync, WebCrawlerResult
-from recruitment.recruitment_db import init_db, save_raw_content
+from recruitment.rabbitmq_utils import get_channel, RABBIT_QUEUE
+# recruitment/services/discovery/url_discovery_service.py
+from pathlib import Path
+import pandas as pd
 
-# Setup logging
-logger = setup_logging("url_discovery")
+CSV_DIR   = Path(__file__).parent.parent.parent / "csvs"
+CSV_FILE  = CSV_DIR / "saved_urls_generic_search_20250222_071729.csv"
+
+
+
+# Load environment variables
+load_dotenv()
+
+# Create module-specific logger
+logger = setup_logging("url_discovery_service")
+
+# Pydantic models for API
+class SearchConfig(BaseModel):
+    id: str
+    days_back: int = 7
+    excluded_domains: List[str] = []
+    academic_suffixes: List[str] = []
+    recruitment_terms: List[str] = [
+        '"recruitment advert"',
+        '"job vacancy"',
+        '"hiring now"',
+        '"employment opportunity"',
+        '"career opportunity"',
+        '"job advertisement"',
+        '"recruitment drive"'
+    ]
+    batch_size: int = 100
+    search_interval_minutes: int = 60
+
+class SearchResponse(BaseModel):
+    search_id: str
+    urls_found: int
+    urls: List[str]
+    timestamp: str
+
+class SearchStatus(BaseModel):
+    search_id: str
+    status: str
+    urls_found: int
+    timestamp: str
+
+# Global variables
+search_results: Dict[str, Dict] = {}
+
+def urls_from_csv() -> list[str]:
+    """
+    Temporary helper: return the unique, non-blank URLs contained in the
+    CSV’s `url` column.
+    """
+    df = pd.read_csv(CSV_FILE, usecols=["url"])
+    return df["url"].dropna().unique().tolist()
+
+def is_valid_url(url: str) -> bool:
+    """Validate URL format and structure."""
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except Exception:
+        return False
+
+class RecruitmentAdSearch:
+    """Encapsulates search logic for recruitment advertisements."""
+
+    def __init__(self, search_config: SearchConfig) -> None:
+        """Initialize the search handler."""
+        self.search_name = search_config.id
+        self.days_back = search_config.days_back
+        self.excluded_domains = search_config.excluded_domains
+        self.academic_suffixes = search_config.academic_suffixes
+        self.recruitment_terms = search_config.recruitment_terms
+
+    def is_valid_recruitment_site(self, url: str) -> bool:
+        """Filter out non-relevant domains if necessary."""
+        try:
+            if not is_valid_url(url):
+                logger.debug(f"Invalid URL format: {url}")
+                return False
+
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+
+            if any(excluded in domain for excluded in self.excluded_domains):
+                logger.debug(f"Excluded domain: {url}")
+                return False
+
+            if any(domain.endswith(suffix) for suffix in self.academic_suffixes):
+                logger.debug(f"Academic domain excluded: {url}")
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking domain validity for {url}: {e}")
+            return False
+
+    def construct_query(self, start_date: str, end_date: str) -> str:
+        """Construct a targeted search query for recruitment adverts."""
+        recruitment_part = f"({' OR '.join(self.recruitment_terms)})"
+        base_query = f'{recruitment_part} AND "South Africa"'
+        final_query = f"{base_query} after:{start_date} before:{end_date}"
+        logger.info(f"Constructed query: {final_query}")
+        return final_query
+
+    def fetch_ads_with_retry(self, query: str, max_results: int = 200, max_retries: int = 3) -> List[str]:
+        """Fetch articles with retry logic for transient failures."""
+        articles = []
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # Try with tld parameter first
+                try:
+                    results = search(query, tld="com", lang="en", num=10, start=0, stop=max_results, pause=2)
+                except TypeError:
+                    # Fall back to version without tld parameter
+                    results = search(query, lang="en", num_results=100, sleep_interval=5)
+
+                # Validate and filter results
+                for url in results:
+                    if self.is_valid_recruitment_site(url):
+                        articles.append(url)
+                        logger.info(f"Found valid URL: {url}")
+                
+                # Log results per search term
+                for term in self.recruitment_terms:
+                    term_results = [url for url in articles if term.lower() in url.lower()]
+                    logger.info(f"Found {len(term_results)} results for term: {term}")
+                
+                if len(articles) == 0:
+                    logger.warning(f"No results found for query: {query}")
+                
+                return articles
+                
+            except Exception as e:
+                retry_count += 1
+                logger.warning(f"Attempt {retry_count} failed: {str(e)}")
+                if retry_count < max_retries:
+                    time.sleep(2 ** retry_count)  # Exponential backoff
+                else:
+                    logger.error(f"Failed to fetch articles after {max_retries} attempts: {str(e)}")
+                    return []
+
+    def get_date_range(self) -> tuple[str, str]:
+        """Get the date range for the search."""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=self.days_back)
+        return (
+            start_date.strftime("%Y-%m-%d"),
+            end_date.strftime("%Y-%m-%d")
+        )
+
+    def get_recent_ads(self) -> List[str]:
+        """Retrieve recent recruitment advertisements based on days_back in the configuration."""
+        start_date, end_date = self.get_date_range()
+        query = self.construct_query(start_date=start_date, end_date=end_date)
+        logger.info(f"Searching for recruitment ads with query: {query}")
+        
+        ads = self.fetch_ads_with_retry(query)
+        logger.info(f"Retrieved {len(ads)} recruitment ads in the past {self.days_back} day(s).")
+        
+        return ads
+
+async def publish_urls_to_queue(urls: List[str], search_id: str):
+    """Publish URLs to RabbitMQ queue."""
+    try:
+        ch = await get_channel()
+        for url in urls:
+            await ch.default_exchange.publish(
+                aio_pika.Message(
+                    body=json.dumps({
+                        "url": url,
+                        "search_id": search_id,
+                        "timestamp": datetime.now().isoformat()
+                    }).encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                ),
+                routing_key=RABBIT_QUEUE,
+            )
+        logger.info(f"Published {len(urls)} URLs to RabbitMQ queue")
+    except Exception as e:
+        logger.error(f"Error publishing to RabbitMQ queue: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to publish URLs: {str(e)}")
+
+async def perform_search(search_config: SearchConfig, background_tasks: BackgroundTasks) -> SearchResponse:
+    """Perform a search for recruitment URLs."""
+    try:
+        search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        search_results[search_id] = {
+            "status": "pending",
+            "urls_found": 0,
+            "urls": [],
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        searcher = RecruitmentAdSearch(search_config)
+        # urls = searcher.get_recent_ads()
+        urls = urls_from_csv()
+        
+        search_results[search_id]["urls"] = urls
+        search_results[search_id]["urls_found"] = len(urls)
+
+ 
+        background_tasks.add_task(publish_urls_to_queue, urls, search_id)
+        
+        return SearchResponse(
+            search_id=search_id,
+            urls_found=len(urls),
+            urls=urls,
+            timestamp=datetime.now().isoformat()
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def perform_scheduled_search(search_config: SearchConfig):
+    """Perform scheduled search for recruitment URLs."""
+    try:
+        logger.info(f"Starting scheduled search with config: {search_config.id}")
+        search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        search_results[search_id] = {
+            "status": "pending",
+            "urls_found": 0,
+            "urls": [],
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        searcher = RecruitmentAdSearch(search_config)
+        # urls = searcher.get_recent_ads()
+        urls = urls_from_csv()          # temporary
+
+        
+        # Limit URLs to batch size
+        urls = urls[:search_config.batch_size]
+        
+        search_results[search_id]["urls"] = urls
+        search_results[search_id]["urls_found"] = len(urls)
+        
+        # Publish URLs to queue
+        await publish_urls_to_queue(urls, search_id)
+        
+        logger.info(f"Completed scheduled search. Found {len(urls)} URLs.")
+        
+    except Exception as e:
+        logger.error(f"Error in scheduled search: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan handler for FastAPI application."""
-    await ensure_queue_exists()
+    """Lifespan context manager for FastAPI application."""
+    # Initialize RabbitMQ connection
+    try:
+        ch = await get_channel()
+        await ch.declare_queue(RABBIT_QUEUE, durable=True)
+        logger.info("RabbitMQ queue declared successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize RabbitMQ: {e}")
+        raise
+
+    # Initialize scheduler
     scheduler = AsyncIOScheduler()
+    scheduler.start()
+    logger.info("Scheduler started")
+
+    # Add initial search task
+    search_config = SearchConfig(
+        id="initial_search",
+        days_back=7,
+        batch_size=100,
+        search_interval_minutes=60
+    )
     scheduler.add_job(
         perform_scheduled_search,
-        IntervalTrigger(minutes=60),
-        id="recruitment_search",
-        replace_existing=True
+        'interval',
+        minutes=search_config.search_interval_minutes,
+        args=[search_config],
+        id="recruitment_search"
     )
-    scheduler.start()
+    logger.info("Initial search task scheduled")
+
     yield
+
+    # Cleanup
     scheduler.shutdown()
+    if not ch.is_closed:
+        await ch.close()
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="URL Discovery Service",
+    description="Service for discovering recruitment URLs and publishing them to a queue",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,172 +333,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class SearchConfig(BaseModel):
-    """Configuration for URL search."""
-    keywords: List[str] = [
-        "site:careers24.com job",
-        "site:pnet.co.za job",
-        "site:indeed.co.za job",
-        "site:jobmail.co.za job",
-        "site:careerjunction.co.za job",
-        "site:jobvine.co.za job",
-        "site:joburg.co.za job",
-        "site:joburg.co.za vacancy",
-        "site:joburg.co.za recruitment",
-        "site:joburg.co.za hiring"
-    ]
-    locations: List[str] = ["South Africa"]
-    max_results: int = 100
+@app.post("/search", response_model=SearchResponse)
+async def create_search(search_config: SearchConfig, background_tasks: BackgroundTasks):
+    """Create a new search for recruitment URLs."""
+    return await perform_search(search_config=search_config, background_tasks=background_tasks)
 
-async def get_recruitment_urls(keywords: List[str], locations: List[str]) -> List[str]:
-    """Get a list of recruitment URLs from Google search."""
-    urls = []
+@app.get("/search/{search_id}", response_model=SearchStatus)
+async def get_search_status(search_id: str):
+    """Get the status of a search."""
+    if search_id not in search_results:
+        raise HTTPException(status_code=404, detail=f"Search ID {search_id} not found")
     
-    for term in keywords:
-        for location in locations:
-            search_query = f"{term} {location}"
-            try:
-                logger.info(f"Starting search for query: {search_query}")
-                response = requests.get(
-                    f"https://www.google.com/search?q={search_query}&num=100",
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.5",
-                        "Accept-Encoding": "gzip, deflate, br",
-                        "Connection": "keep-alive",
-                        "Upgrade-Insecure-Requests": "1",
-                        "Cache-Control": "max-age=0"
-                    }
-                )
-                
-                logger.info(f"Google response status code: {response.status_code}")
-                logger.info(f"Google response headers: {response.headers}")
-                
-                if response.status_code != 200:
-                    logger.warning(f"Non-200 response from Google: {response.status_code}")
-                    logger.warning(f"Response content: {response.text[:500]}")  # Log first 500 chars of response
-                    continue
-                    
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Check for CAPTCHA or blocking
-                if "captcha" in response.text.lower() or "unusual traffic" in response.text.lower():
-                    logger.error("Google is showing CAPTCHA or blocking the request")
-                    logger.error(f"Response content: {response.text[:500]}")
-                    continue
-                
-                found_urls = []
-                
-                # Log the HTML structure for debugging
-                logger.debug(f"HTML structure: {soup.prettify()[:1000]}")
-                
-                # Try different selectors for Google search results
-                for link in soup.find_all('a'):
-                    href = link.get('href')
-                    if href:
-                        # Handle different URL formats
-                        if href.startswith('/url?q='):
-                            url = href.split('&')[0][7:]
-                        elif href.startswith('http'):
-                            url = href
-                        else:
-                            continue
-                            
-                        # Clean and validate URL
-                        url = url.strip()
-                        if not url.startswith(('http://', 'https://')):
-                            continue
-                            
-                        if url not in urls:
-                            urls.append(url)
-                            found_urls.append(url)
-                            logger.debug(f"Found valid URL: {url}")
-                
-                logger.info(f"Found {len(found_urls)} new URLs for term: \"{search_query}\"")
-                
-                # Add a longer delay between requests to avoid rate limiting
-                await asyncio.sleep(5)
-                
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Network error searching for term \"{search_query}\": {str(e)}")
-            except Exception as e:
-                logger.error(f"Unexpected error searching for term \"{search_query}\": {str(e)}")
+    return SearchStatus(
+        search_id=search_id,
+        status=search_results[search_id]["status"],
+        urls_found=search_results[search_id]["urls_found"],
+        timestamp=search_results[search_id]["timestamp"]
+    )
+
+@app.get("/search/{search_id}/urls", response_model=List[str])
+async def get_search_urls(search_id: str):
+    """Get the URLs found by a search."""
+    if search_id not in search_results:
+        raise HTTPException(status_code=404, detail=f"Search ID {search_id} not found")
     
-    logger.info(f"Total unique URLs found: {len(urls)}")
-    return urls
-
-async def perform_search(cfg: SearchConfig):
-    """Perform a search for recruitment URLs and publish them to the queue."""
-    try:
-        logger.info("Starting new search with config: %s", cfg)
-        urls = await get_recruitment_urls(cfg.keywords, cfg.locations)
-        search_id = uuid4().hex
-        
-        if not urls:
-            logger.warning("No URLs found in search")
-            return {
-                "status": "no_results",
-                "urls_published": 0,
-                "search_id": search_id
-            }
-        
-        logger.info(f"Publishing {len(urls)} URLs to queue")
-        for url in urls:
-            await publish_json({
-                "url": url,
-                "search_id": search_id,
-                "timestamp": datetime.now().isoformat()
-            })
-        
-        logger.info(f"Successfully published {len(urls)} URLs")
-        return {
-            "status": "success",
-            "urls_published": len(urls),
-            "search_id": search_id
-        }
-    except Exception as e:
-        logger.error(f"Error performing search: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-async def perform_scheduled_search():
-    """Perform a scheduled search for recruitment URLs."""
-    try:
-        logger.info("Starting scheduled search")
-        cfg = SearchConfig()  # Use default configuration
-        urls = await get_recruitment_urls(cfg.keywords, cfg.locations)
-        search_id = uuid4().hex
-        
-        if not urls:
-            logger.warning("No URLs found in scheduled search")
-            return
-            
-        logger.info(f"Publishing {len(urls)} URLs from scheduled search")
-        for url in urls:
-            await publish_json({
-                "url": url,
-                "search_id": search_id,
-                "timestamp": datetime.now().isoformat()
-            })
-        
-        logger.info(f"Completed scheduled search. Found {len(urls)} URLs.")
-    except Exception as e:
-        logger.error(f"Error in scheduled search: {str(e)}", exc_info=True)
+    return search_results[search_id]["urls"]
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint for Docker healthcheck."""
     try:
-        from recruitment.rabbitmq_utils import get_channel
         ch = await get_channel()
-        return {"status": "up", "queue": ch.number}
+        if ch and not ch.is_closed:
+            return {"status": "healthy", "rabbitmq": "connected"}
+        return {"status": "unhealthy", "rabbitmq": "disconnected"}
     except Exception as e:
-        return {"status": "down", "error": str(e)}
-
-@app.post("/search")
-async def search(config: SearchConfig):
-    """Trigger a search for recruitment URLs."""
-    return await perform_search(config)
+        return {"status": "unhealthy", "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

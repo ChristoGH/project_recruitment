@@ -26,6 +26,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from recruitment.logging_config import setup_logging
 from recruitment.rabbitmq_utils import get_channel, RABBIT_QUEUE
+# recruitment/services/discovery/url_discovery_service.py
+from pathlib import Path
+import pandas as pd
+
+CSV_DIR   = Path(__file__).parent.parent.parent / "csvs"
+CSV_FILE  = CSV_DIR / "saved_urls_generic_search_20250222_071729.csv"
+
+
 
 # Load environment variables
 load_dotenv()
@@ -65,6 +73,14 @@ class SearchStatus(BaseModel):
 
 # Global variables
 search_results: Dict[str, Dict] = {}
+
+def urls_from_csv() -> list[str]:
+    """
+    Temporary helper: return the unique, non-blank URLs contained in the
+    CSV’s `url` column.
+    """
+    df = pd.read_csv(CSV_FILE, usecols=["url"])
+    return df["url"].dropna().unique().tolist()
 
 def is_valid_url(url: str) -> bool:
     """Validate URL format and structure."""
@@ -210,11 +226,13 @@ async def perform_search(search_config: SearchConfig, background_tasks: Backgrou
         }
         
         searcher = RecruitmentAdSearch(search_config)
-        urls = searcher.get_recent_ads()
+        # urls = searcher.get_recent_ads()
+        urls = urls_from_csv()
         
         search_results[search_id]["urls"] = urls
         search_results[search_id]["urls_found"] = len(urls)
-        
+
+ 
         background_tasks.add_task(publish_urls_to_queue, urls, search_id)
         
         return SearchResponse(
@@ -242,7 +260,9 @@ async def perform_scheduled_search(search_config: SearchConfig):
         }
         
         searcher = RecruitmentAdSearch(search_config)
-        urls = searcher.get_recent_ads()
+        # urls = searcher.get_recent_ads()
+        urls = urls_from_csv()          # temporary
+
         
         # Limit URLs to batch size
         urls = urls[:search_config.batch_size]

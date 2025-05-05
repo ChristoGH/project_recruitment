@@ -64,6 +64,7 @@ class SearchConfig(BaseModel):
         "site:joburg.co.za recruitment",
         "site:joburg.co.za hiring"
     ]
+    locations: List[str] = ["South Africa"]
     batch_size: int = 100
     search_interval_minutes: int = 60
 
@@ -100,6 +101,7 @@ class RecruitmentAdSearch:
         self.excluded_domains = search_config.excluded_domains
         self.academic_suffixes = search_config.academic_suffixes
         self.recruitment_terms = search_config.recruitment_terms
+        self.locations = search_config.locations
 
     def is_valid_recruitment_site(self, url: str) -> bool:
         """Filter out non-relevant domains if necessary."""
@@ -127,8 +129,22 @@ class RecruitmentAdSearch:
 
     def construct_query(self, start_date: str, end_date: str) -> str:
         """Construct a targeted search query for recruitment adverts."""
-        recruitment_part = f"({' OR '.join(self.recruitment_terms)})"
-        base_query = f'{recruitment_part} AND "South Africa"'
+        # Handle both site-specific and general search terms
+        site_specific_terms = [term for term in self.recruitment_terms if "site:" in term]
+        general_terms = [term for term in self.recruitment_terms if "site:" not in term]
+        
+        # Build the query parts
+        site_specific_part = f"({' OR '.join(site_specific_terms)})" if site_specific_terms else ""
+        general_part = f"({' OR '.join(general_terms)})" if general_terms else ""
+        
+        # Combine parts with OR if both exist
+        recruitment_part = " OR ".join(filter(None, [site_specific_part, general_part]))
+        
+        # Add location filter
+        location_part = " OR ".join(f'"{loc}"' for loc in self.locations)
+        base_query = f"({recruitment_part}) AND ({location_part})"
+        
+        # Add date range
         final_query = f"{base_query} after:{start_date} before:{end_date}"
         logger.info(f"Constructed query: {final_query}")
         return final_query
