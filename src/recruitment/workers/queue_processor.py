@@ -1,7 +1,7 @@
 """Module for processing URLs from the RabbitMQ queue."""
 import asyncio
 from typing import List, Optional
-from src.recruitment.recruitment_db import RecruitmentDatabase
+from src.recruitment.db.repository import RecruitmentDatabase
 from src.recruitment.models.url_models import URLProcessingResult
 from src.recruitment.services.processing.main import URLProcessingService
 

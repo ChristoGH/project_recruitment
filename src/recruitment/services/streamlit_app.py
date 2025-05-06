@@ -17,10 +17,10 @@ if project_root not in sys.path:
 import streamlit as st
 import pandas as pd
 from urllib.parse import urlparse
-from libraries.web_crawler_lib import WebCrawlerResult, crawl_website
+from ..utils.web_crawler import WebCrawlerResult, crawl_website
 import asyncio
-from recruitment.prompts import LIST_PROMPTS, NON_LIST_PROMPTS, COMPLEX_PROMPTS
-from recruitment.utils import get_model_for_prompt
+from ..prompts import LIST_PROMPTS, NON_LIST_PROMPTS, COMPLEX_PROMPTS
+from ..utils.prompt_utils import get_model_for_prompt
 
 def setup_logging(log_name="app", log_dir=None, log_level=None):
     """Configure application logging."""

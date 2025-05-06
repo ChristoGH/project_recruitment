@@ -7,7 +7,7 @@ import sys
 import os
 
 # Add the parent directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
 from src.recruitment.services.processing.main import (
     URLProcessingService,
@@ -15,7 +15,7 @@ from src.recruitment.services.processing.main import (
     URLProcessingResult
 )
 from src.recruitment.models.db_models import JobPosting
-from src.recruitment.recruitment_db import DatabaseError, RecruitmentDatabase
+from src.recruitment.db.repository import DatabaseError, RecruitmentDatabase
 
 @pytest.fixture
 def mock_db_connection():

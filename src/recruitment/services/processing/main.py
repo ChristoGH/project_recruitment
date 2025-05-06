@@ -21,12 +21,12 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import urlparse
 
-from src.recruitment.logging_config import setup_logging
-from src.recruitment.rabbitmq_utils import get_rabbitmq_connection, RABBIT_QUEUE, RabbitMQConnection
-from src.recruitment.models import transform_skills_response
-from src.recruitment.web_crawler_lib import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
-from src.recruitment.recruitment_db import RecruitmentDatabase
-from src.recruitment.models.url_models import URLProcessingConfig, URLProcessingResult
+from ...logging_config import setup_logging
+from ...utils.rabbitmq import get_rabbitmq_connection, RABBIT_QUEUE, RabbitMQConnection
+from ...models.skills import transform_skills_response
+from ...utils.web_crawler import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
+from ...db.repository import RecruitmentDatabase
+from ...models.url import URLProcessingConfig, URLProcessingResult
 
 # Load environment variables
 load_dotenv()
@@ -36,7 +36,7 @@ logger = setup_logging(__name__)
 
 # Get the absolute path to the project root
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-DB_PATH = str(PROJECT_ROOT / "databases" / "recruitment.db")
+DB_PATH = os.getenv("RECRUITMENT_PATH", str(PROJECT_ROOT / "src" / "recruitment" / "db" / "recruitment.db"))
 
 # Initialize database
 db = RecruitmentDatabase(DB_PATH)

@@ -4,7 +4,7 @@ from typing import Dict, Type
 from pydantic import BaseModel
 
 # Import all the necessary model classes
-from recruitment.recruitment_models import (
+from src.recruitment.models.recruitment_models import (
     AdvertResponse,
     ConfirmResponse,
     JobResponse,

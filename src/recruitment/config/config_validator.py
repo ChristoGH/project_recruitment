@@ -1,7 +1,7 @@
 """Configuration validation for recruitment advertisement search."""
 from typing import Dict, Any
 import json
-from recruitment.logging_config import setup_logging
+from src.recruitment.logging_config import setup_logging
 
 logger = setup_logging("config_validator")
 

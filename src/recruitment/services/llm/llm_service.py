@@ -2,7 +2,7 @@
 LLM Service for processing recruitment content.
 """
 from typing import Dict, Any, List
-from src.recruitment.utils.logging_config import setup_logging
+from ...utils.logging_config import setup_logging
 
 logger = setup_logging("llm_service")
 

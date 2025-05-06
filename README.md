@@ -20,50 +20,61 @@ A production-ready system for discovering and processing recruitment URLs. This 
 ```text
 project_recruitment/
 │
-├─ README.md                  ← this file
-├─ .env.example               ← all configurable env-vars with safe defaults
-├─ .dockerignore
+├─ pyproject.toml          # single source‑of‑truth for build & deps (PEP 517)
+├─ README.md
+├─ .env.example            # show required env vars; real .env in Secrets
 ├─ docker-compose.yml
-├─ requirements.lock          ← frozen hashes, built with `uv pip compile`
-├─ pyproject.toml             ← PEP 621 metadata + dependencies
-│
-├─ src/                       ← single installable package
-│  └─ recruitment/
-│     ├─ __init__.py
-│     │
-│     ├─ logging_config.py    ← shared structured-logging setup
-│     ├─ rabbitmq_utils.py    ← one async helper for channel/queue
-│     ├─ recruitment_db.py    ← SQLite → Postgres adapter
-│     ├─ web_crawler_lib.py   ← sync/async scraping utilities
-│     │
-│     ├─ models/              ← pydantic schemas / DTOs
-│     │   ├─ __init__.py
-│     │   └─ url_models.py
-│     │
-│     └─ services/
-│        ├─ discovery/
-│        │   ├─ __init__.py
-│        │   ├─ main.py       ← `python -m recruitment.services.discovery`
-│        │   └─ scheduler.py  ← APScheduler hourly job
-│        └─ processing/
-│            ├─ __init__.py
-│            └─ main.py       ← consumer → crawl → db
-│
 ├─ docker/
-│  ├─ discovery.Dockerfile    ← base python:3.12-slim, non-root user
-│  └─ processing.Dockerfile
+│   ├─ discovery.Dockerfile
+│   └─ processing.Dockerfile
+│
+├─ src/                    # importable code lives ONLY here
+│   └─ recruitment/
+│       ├─ __init__.py
+│       ├─ logging_config.py
+│       ├─ config.py       # Pydantic/BaseSettings → pulls from env
+│       ├─ db/
+│       │   ├─ __init__.py
+│       │   ├─ models.py
+│       │   ├─ migrations/         # (Alembic or SQL files)
+│       │   └─ repository.py
+│       ├─ services/
+│       │   ├─ discovery/
+│       │   │   ├─ __init__.py
+│       │   │   └─ main.py
+│       │   ├─ processing/
+│       │   │   ├─ __init__.py
+│       │   │   └─ main.py
+│       │   └─ llm/
+│       │       ├─ __init__.py
+│       │       └─ llm_service.py
+│       ├─ workers/                # background consumers, schedulers
+│       │   ├─ __init__.py
+│       │   └─ queue_processor.py
+│       ├─ utils/
+│       │   ├─ __init__.py
+│       │   └─ rabbitmq.py
+│       └─ prompts/                # prompt text or templates
+│           └─ __init__.py
 │
 ├─ tests/
-│  ├─ unit/                   ← no external services
-│  ├─ integration/            ← spins up RabbitMQ & SQLite in tmp dir
-│  └─ e2e/                    ← calls running compose stack
+│   ├─ unit/
+│   │   ├─ services/
+│   │   │   ├─ discovery/
+│   │   │   │   └─ test_main.py
+│   │   │   ├─ processing/
+│   │   │   │   └─ test_main.py
+│   │   │   └─ llm/
+│   │   │       └─ test_service.py
+│   │   └─ db/
+│   │       └─ test_repository.py
+│   ├─ integration/
+│   │   └─ workers/
+│   │       └─ test_queue_processor.py
+│   └─ e2e/
 │
-├─ scripts/
-│  ├─ ci_smoke_test.sh        ← waits for /healthz then checks DB row count
-│  └─ migrate_db.py           ← future migrations
-│
-└─ ci/
-   └─ github_actions.yml
+├─ scripts/                # one‑off CLIs (populate_queue.py, etc.)
+└─ .gitignore              # **logs/**  **databases/**  *.db  *.bak …
 ```
 
 ## Getting Started
@@ -84,14 +95,13 @@ project_recruitment/
 
 2. Create and activate a virtual environment:
    ```bash
-   uv venv .venv
-   source .venv/bin/activate
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
 3. Install dependencies:
    ```bash
-   uv pip install -e ".[dev]"
-   uv pip install -r requirements.lock
+   pip install -e ".[dev]"
    ```
 
 4. Copy the example environment file:
@@ -118,6 +128,9 @@ pytest tests/integration
 
 # Run e2e tests
 pytest tests/e2e
+
+# Run specific test file
+pytest tests/unit/services/discovery/test_main.py
 ```
 
 ## Deployment

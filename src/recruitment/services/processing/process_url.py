@@ -3,9 +3,9 @@ import json
 from typing import Dict, Any
 from urllib.parse import urlparse
 from libraries.web_crawler_lib import crawl_website
-from recruitment.prompts import LIST_PROMPTS
-from recruitment.recruitment_models import AdvertResponse
-from recruitment.utils import get_model_for_prompt
+from src.recruitment.prompts import LIST_PROMPTS
+from src.recruitment.recruitment_models import AdvertResponse
+from src.recruitment.utils import get_model_for_prompt
 
 async def verify_recruitment_url(url: str) -> Dict[str, Any]:
     """

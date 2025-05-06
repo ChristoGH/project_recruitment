@@ -6,9 +6,9 @@ from typing import Dict, List, Any, Optional, Union, Tuple
 from pydantic import BaseModel, ValidationError
 
 # Import the model mapping functionality
-from recruitment.utils import get_model_for_prompt
+from src.recruitment.utils import get_model_for_prompt
 
-from recruitment.logging_config import setup_logging
+from src.recruitment.logging_config import setup_logging
 
 # Create module-specific logger
 logger = setup_logging("response_processor_functions")

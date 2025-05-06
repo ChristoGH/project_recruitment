@@ -10,9 +10,9 @@ import asyncio
 import sys
 
 # Add the parent directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from src.recruitment.recruitment_db import RecruitmentDatabase, DatabaseError
+from src.recruitment.db.repository import RecruitmentDatabase, DatabaseError
 
 @pytest.fixture
 def mock_db_connection():

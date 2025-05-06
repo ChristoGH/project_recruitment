@@ -1,15 +1,16 @@
-"""Test module for processing URLs from queue."""
+"""Test module for queue processing functionality."""
 import pytest
 import asyncio
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, patch
 import sys
 import os
 
 # Add the parent directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
-from src.recruitment.process_urls_from_queue import process_urls_from_queue
-from src.recruitment.recruitment_db import RecruitmentDatabase
+from src.recruitment.workers.queue_processor import QueueProcessor
+from src.recruitment.db.repository import RecruitmentDatabase
+from src.recruitment.utils.rabbitmq import RabbitMQConnection
 from recruitment.models import URL
 
 @pytest.fixture

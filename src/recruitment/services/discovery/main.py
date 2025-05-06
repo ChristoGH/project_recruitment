@@ -25,12 +25,12 @@ import aio_pika
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pathlib import Path
 
-from src.recruitment.logging_config import setup_logging
-from src.recruitment.rabbitmq_utils import RabbitMQConnection, get_rabbitmq_connection, RABBIT_QUEUE
-from src.recruitment.models.url_models import URLDiscoveryConfig
-from src.recruitment.models import transform_skills_response
-from src.recruitment.web_crawler_lib import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
-from src.recruitment.recruitment_db import RecruitmentDatabase
+from ...logging_config import setup_logging
+from ...utils.rabbitmq import RabbitMQConnection, get_rabbitmq_connection, RABBIT_QUEUE
+from ...models.url import URLDiscoveryConfig
+from ...models.skills import transform_skills_response
+from ...utils.web_crawler import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
+from ...db.repository import RecruitmentDatabase
 
 # Load environment variables
 load_dotenv()

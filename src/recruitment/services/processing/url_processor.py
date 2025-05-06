@@ -3,10 +3,10 @@ Module for processing URLs.
 """
 import logging
 from typing import Dict, Any, Optional, List
-from recruitment.models import URL
-from recruitment.recruitment_db import RecruitmentDatabase
-from recruitment.batch_processor import process_all_prompt_responses
-from recruitment.logging_config import setup_logging
+from src.recruitment.models import URL
+from src.recruitment.recruitment_db import RecruitmentDatabase
+from src.recruitment.batch_processor import process_all_prompt_responses
+from src.recruitment.logging_config import setup_logging
 
 # Create module-specific logger
 logger = setup_logging("url_processor")
