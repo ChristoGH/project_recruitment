@@ -27,8 +27,7 @@ from pathlib import Path
 
 from ...logging_config import setup_logging
 from ...utils.rabbitmq import RabbitMQConnection, get_rabbitmq_connection, RABBIT_QUEUE
-from ...models.url import URLDiscoveryConfig
-from ...models.skills import transform_skills_response
+from ...models.url_models import URLDiscoveryConfig, transform_skills_response
 from ...utils.web_crawler import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
 from ...db.repository import RecruitmentDatabase
 

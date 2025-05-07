@@ -23,10 +23,9 @@ from urllib.parse import urlparse
 
 from ...logging_config import setup_logging
 from ...utils.rabbitmq import get_rabbitmq_connection, RABBIT_QUEUE, RabbitMQConnection
-from ...models.skills import transform_skills_response
+from ...models.url_models import URLProcessingConfig, URLProcessingResult, transform_skills_response
 from ...utils.web_crawler import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
 from ...db.repository import RecruitmentDatabase
-from ...models.url import URLProcessingConfig, URLProcessingResult
 
 # Load environment variables
 load_dotenv()

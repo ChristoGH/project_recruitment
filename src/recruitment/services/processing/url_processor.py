@@ -3,7 +3,7 @@ Module for processing URLs.
 """
 import logging
 from typing import Dict, Any, Optional, List
-from src.recruitment.models import URL
+from src.recruitment.models.url_models import URL
 from src.recruitment.recruitment_db import RecruitmentDatabase
 from src.recruitment.batch_processor import process_all_prompt_responses
 from src.recruitment.logging_config import setup_logging

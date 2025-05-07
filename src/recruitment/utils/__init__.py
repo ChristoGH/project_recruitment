@@ -3,9 +3,10 @@
 from typing import Dict, Type
 from pydantic import BaseModel
 
-# Import all the necessary model classes
-from src.recruitment.models.recruitment_models import (
+# Import all the necessary model classes from url_models.py
+from src.recruitment.models.url_models import (
     AdvertResponse,
+    JobAdvertResponse,
     ConfirmResponse,
     JobResponse,
     LocationResponse,
@@ -22,7 +23,6 @@ from src.recruitment.models.recruitment_models import (
     LinkResponse,
     EmailResponse,
     CompanyPhoneNumberResponse,
-    JobAdvertResponse
 )
 
 # Map prompt keys to their corresponding model classes

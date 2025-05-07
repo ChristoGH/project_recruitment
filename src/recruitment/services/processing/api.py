@@ -20,7 +20,7 @@ import aio_pika
 import sqlite3
 
 from src.recruitment.utils.logging_config import setup_logging
-from src.recruitment.utils.rabbitmq_utils import get_channel, RABBIT_QUEUE
+from src.recruitment.utils.rabbitmq import get_rabbitmq_connection, RABBIT_QUEUE
 from src.recruitment.services.processing.url_processing_service import URLProcessor
 
 # Load environment variables
@@ -77,7 +77,7 @@ async def consume_urls(queue: aio_pika.abc.AbstractQueue):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start the SQLite DB, attach to RabbitMQ, launch the consumer."""
-    ch = await get_channel()                       # robust, cached
+    ch = await get_rabbitmq_connection()                       # robust, cached
 
     # 📖  LOOK‑UP ONLY  – do **not** redeclare with new arguments
     queue = await ch.get_queue(RABBIT_QUEUE, passive=True)
@@ -112,7 +112,7 @@ app.add_middleware(
 async def health_check():
     """Health check endpoint for Docker healthcheck."""
     try:
-        ch = await get_channel()
+        ch = await get_rabbitmq_connection()
         if ch and not ch.is_closed:
             return {"status": "healthy", "rabbitmq": "connected"}
         return {"status": "unhealthy", "rabbitmq": "disconnected"}
