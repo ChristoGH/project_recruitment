@@ -213,9 +213,10 @@ class RecruitmentAdSearch:
 async def publish_urls_to_queue(urls: List[str], search_id: str):
     """Publish URLs to RabbitMQ queue."""
     try:
-        ch = await get_rabbitmq_connection()
+        connection = await get_rabbitmq_connection()
+        channel = await connection.channel()
         for url in urls:
-            await ch.default_exchange.publish(
+            await channel.default_exchange.publish(
                 aio_pika.Message(
                     body=json.dumps({
                         "url": url,
@@ -297,8 +298,9 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI application."""
     # Initialize RabbitMQ connection
     try:
-        ch = await get_rabbitmq_connection()
-        await ch.declare_queue(RABBIT_QUEUE, durable=True)
+        connection = await get_rabbitmq_connection()
+        channel = await connection.channel()
+        await channel.declare_queue(RABBIT_QUEUE, durable=True)
         logger.info("RabbitMQ queue declared successfully")
     except Exception as e:
         logger.error(f"Failed to initialize RabbitMQ: {e}")
@@ -329,8 +331,8 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     scheduler.shutdown()
-    if not ch.is_closed:
-        await ch.close()
+    if not connection.is_closed:
+        await connection.close()
 
 app = FastAPI(
     title="URL Discovery Service",
@@ -377,8 +379,8 @@ async def get_search_urls(search_id: str):
 async def health_check():
     """Health check endpoint for Docker healthcheck."""
     try:
-        ch = await get_rabbitmq_connection()
-        if ch and not ch.is_closed:
+        connection = await get_rabbitmq_connection()
+        if connection and not connection.is_closed:
             return {"status": "healthy", "rabbitmq": "connected"}
         return {"status": "unhealthy", "rabbitmq": "disconnected"}
     except Exception as e:

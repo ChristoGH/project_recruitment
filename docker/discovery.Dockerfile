@@ -24,4 +24,4 @@ RUN mkdir -p /app/logs /data /app/databases /app/src/recruitment/db && \
     chmod -R 777 /app/databases /app/src/recruitment/db
 
 # Run the service
-CMD ["python", "-m", "src.recruitment.services.discovery.main"] 
+CMD ["uvicorn", "src.recruitment.services.discovery.main:app", "--host", "0.0.0.0", "--port", "8000"] 

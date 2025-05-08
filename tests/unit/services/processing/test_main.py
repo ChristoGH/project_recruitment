@@ -9,13 +9,10 @@ import os
 # Add the parent directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
-from src.recruitment.services.processing.main import (
-    URLProcessingService,
-    URLProcessingConfig,
-    URLProcessingResult
-)
-from src.recruitment.models.db_models import JobPosting
-from src.recruitment.db.repository import DatabaseError, RecruitmentDatabase
+from src.recruitment.services.processing.main import app
+from src.recruitment.models.url_models import URLProcessingResult
+from src.recruitment.utils.web_crawler import WebCrawlerResult
+from src.recruitment.db.repository import RecruitmentDatabase
 
 @pytest.fixture
 def mock_db_connection():
@@ -34,18 +31,6 @@ def db():
         yield db
 
 @pytest.fixture
-def app():
-    return FastAPI()
-
-@pytest.fixture
-def processing_config():
-    return URLProcessingConfig(
-        max_concurrent_requests=2,
-        request_timeout=30,
-        retry_attempts=3
-    )
-
-@pytest.fixture
 def mock_rabbitmq():
     mock = AsyncMock()
     mock.consume_urls = AsyncMock(return_value=[
@@ -54,50 +39,43 @@ def mock_rabbitmq():
     ])
     return mock
 
-@pytest.fixture
-def mock_db():
-    mock = AsyncMock()
-    mock.save_result = AsyncMock()
-    return mock
-
-@pytest.fixture
-def processing_service(processing_config, mock_rabbitmq, mock_db):
-    service = URLProcessingService(
-        config=processing_config,
-        rabbitmq=mock_rabbitmq,
-        db=mock_db
-    )
-    service._process_url = AsyncMock(return_value=URLProcessingResult(
-        url="https://example.com/job1",
-        success=True,
-        job_posting=JobPosting(
-            title="Software Engineer",
-            company="Example Corp",
-            location="Remote",
-            description="Test job description"
+@pytest.mark.asyncio
+async def test_process_url():
+    """Test processing a single URL."""
+    with patch('src.recruitment.utils.web_crawler.crawl_website_sync_v2') as mock_crawl:
+        mock_crawl.return_value = WebCrawlerResult(
+            success=True,
+            markdown="Test content",
+            transformed={"title": "Test Job"}
         )
-    ))
-    return service
-
-def test_processing_service_initialization(processing_service, processing_config):
-    assert processing_service.config.max_concurrent_requests == processing_config.max_concurrent_requests
-    assert processing_service.config.request_timeout == processing_config.request_timeout
-    assert processing_service.config.retry_attempts == processing_config.retry_attempts
-
-@pytest.mark.asyncio
-async def test_process_url(processing_service):
-    test_url = "https://example.com/job1"
-    result = await processing_service.process_url(test_url)
-    
-    assert isinstance(result, URLProcessingResult)
-    assert result.url == test_url
-    assert result.success is True
-    assert isinstance(result.job_posting, JobPosting)
-    processing_service._process_url.assert_called_once_with(test_url)
+        
+        with patch('src.recruitment.db.repository.RecruitmentDatabase.save_processed_url') as mock_save:
+            mock_save.return_value = None
+            
+            from src.recruitment.services.processing.main import process_url
+            await process_url("https://example.com/job1", "test_search")
+            
+            mock_crawl.assert_called_once_with("https://example.com/job1")
+            mock_save.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_consume_urls(processing_service):
-    await processing_service.consume_urls()
-    
-    processing_service.rabbitmq.consume_urls.assert_called_once()
-    assert processing_service.db.save_result.call_count == 2 
+async def test_consume_urls():
+    """Test consuming URLs from the queue."""
+    with patch('src.recruitment.utils.rabbitmq.get_rabbitmq_connection') as mock_conn:
+        mock_channel = AsyncMock()
+        mock_conn.return_value.channel.return_value = mock_channel
+        
+        mock_queue = AsyncMock()
+        mock_channel.declare_queue.return_value = mock_queue
+        
+        mock_message = AsyncMock()
+        mock_message.body.decode.return_value = '{"url": "https://example.com/job1", "search_id": "test_search"}'
+        mock_queue.iterator.return_value.__aiter__.return_value = [mock_message]
+        
+        with patch('src.recruitment.services.processing.main.process_url') as mock_process:
+            mock_process.return_value = None
+            
+            from src.recruitment.services.processing.main import consume_urls
+            await consume_urls()
+            
+            mock_process.assert_called_once_with("https://example.com/job1", "test_search") 
