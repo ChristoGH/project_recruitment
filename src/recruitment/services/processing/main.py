@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ...logging_config import setup_logging
-from ...utils.rabbitmq import get_rabbitmq_connection, RABBIT_QUEUE, RabbitMQConnection
+from ...utils.rabbitmq import RabbitMQConnection, get_rabbitmq_connection, RABBIT_QUEUE
 from ...models.url_models import URLProcessingConfig, URLProcessingResult, transform_skills_response
 from ...utils.web_crawler import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
 from ...db.repository import RecruitmentDatabase
@@ -110,7 +110,7 @@ class URLProcessor:
 async def consume_urls():
     """Consume URLs from RabbitMQ queue and process them."""
     try:
-        ch = await get_channel()
+        ch = await get_rabbitmq_connection()
         queue = await ch.get_queue(RABBIT_QUEUE)
         
         async with queue.iterator() as queue_iter:
@@ -145,8 +145,9 @@ async def lifespan(app: FastAPI):
     
     # Initialize RabbitMQ connection
     try:
-        ch = await get_channel()
-        await ch.declare_queue(RABBIT_QUEUE, durable=True)
+        connection = await get_rabbitmq_connection()
+        channel = await connection.channel()
+        await channel.declare_queue(RABBIT_QUEUE, durable=True)
         logger.info("RabbitMQ queue declared successfully")
     except Exception as e:
         logger.error(f"Failed to initialize RabbitMQ: {e}")
@@ -163,8 +164,8 @@ async def lifespan(app: FastAPI):
         await consumer_task
     except asyncio.CancelledError:
         pass
-    if not ch.is_closed:
-        await ch.close()
+    if not connection.is_closed:
+        await connection.close()
 
 app = FastAPI(
     title="URL Processing Service",
@@ -185,8 +186,8 @@ app.add_middleware(
 async def health_check():
     """Health check endpoint for Docker healthcheck."""
     try:
-        ch = await get_channel()
-        if ch and not ch.is_closed:
+        connection = await get_rabbitmq_connection()
+        if connection and not connection.is_closed:
             return {"status": "healthy", "rabbitmq": "connected"}
         return {"status": "unhealthy", "rabbitmq": "disconnected"}
     except Exception as e:

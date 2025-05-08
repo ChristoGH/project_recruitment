@@ -19,8 +19,9 @@ RUN pip install --no-cache-dir .
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Create necessary directories
-RUN mkdir -p /app/logs /data /app/databases
+# Create necessary directories and set permissions
+RUN mkdir -p /app/logs /data /app/databases /app/src/recruitment/db && \
+    chmod -R 777 /app/databases /app/src/recruitment/db
 
 # Run the service
-CMD ["python", "-m", "recruitment.services.processing.url_processing_service"] 
+CMD ["uvicorn", "src.recruitment.services.processing.main:app", "--host", "0.0.0.0", "--port", "8001"] 

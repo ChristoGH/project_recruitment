@@ -18,11 +18,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - RABBIT_HOST=rabbitmq
-      - RABBIT_PORT=5672
-      - RABBIT_USER=guest
-      - RABBIT_PASSWORD=guest
-      - RABBIT_VHOST=/
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+      - RABBITMQ_VHOST=/
       - RECRUITMENT_PATH=/app/src/recruitment/db/recruitment.db
     depends_on:
       rabbitmq:

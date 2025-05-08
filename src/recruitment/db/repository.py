@@ -28,6 +28,9 @@ class RecruitmentDatabase:
         else:
             self.db_path = db_path
             
+        # Ensure the database directory exists
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        
         logger.info(f"Initializing database at: {self.db_path}")
         self.init_db()
     

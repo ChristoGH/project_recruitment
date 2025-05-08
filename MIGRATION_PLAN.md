@@ -236,3 +236,65 @@ project_recruitment/
 3. ✅ Begin with Phase 1 preparation
 4. ⚠️ Execute migration in small, testable steps
 5. ⚠️ Verify each step before proceeding
+
+# Project Simplification TODO
+
+## Architecture Simplification
+- [ ] Consolidate `url_discovery` and `url_processing` into a single service
+- [ ] Remove RabbitMQ dependency and implement direct processing
+- [ ] Simplify deployment by reducing to a single container
+- [ ] Remove unnecessary service boundaries and API endpoints
+
+## Database Simplification
+- [ ] Reduce database schema to essential tables only:
+  - [ ] urls (for discovered URLs)
+  - [ ] content (for processed content)
+  - [ ] metadata (for basic job/company info)
+- [ ] Remove excessive normalization
+- [ ] Eliminate unnecessary many-to-many relationships
+- [ ] Simplify table structure to match actual use cases
+
+## Code Structure Cleanup
+- [ ] Remove redundant service classes:
+  - [ ] `URLDiscoveryService`
+  - [ ] `URLProcessingService`
+  - [ ] `RecruitmentAdSearch`
+- [ ] Eliminate unnecessary abstraction layers
+- [ ] Remove duplicate functionality across services
+- [ ] Consolidate similar functions and methods
+
+## Error Handling Simplification
+- [ ] Remove custom exception classes
+- [ ] Simplify error handling patterns
+- [ ] Reduce logging verbosity
+- [ ] Implement straightforward error reporting
+
+## Configuration Simplification
+- [ ] Reduce configuration options to essential parameters
+- [ ] Consolidate environment variables
+- [ ] Remove unused configuration options
+- [ ] Simplify configuration management
+
+## Performance Optimization
+- [ ] Remove unnecessary database queries
+- [ ] Optimize data processing pipeline
+- [ ] Reduce memory footprint
+- [ ] Simplify resource usage
+
+## Documentation Updates
+- [ ] Update README to reflect simplified architecture
+- [ ] Document new streamlined workflow
+- [ ] Update deployment instructions
+- [ ] Add clear examples of basic usage
+
+## Testing
+- [ ] Simplify test suite to match new architecture
+- [ ] Remove redundant test cases
+- [ ] Focus on essential functionality testing
+- [ ] Update integration tests for new structure
+
+## Future Considerations
+- [ ] Monitor system performance after simplification
+- [ ] Gather metrics on resource usage
+- [ ] Document any new requirements that emerge
+- [ ] Plan for gradual feature additions if needed

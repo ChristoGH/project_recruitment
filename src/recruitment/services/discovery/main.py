@@ -39,7 +39,10 @@ logger = setup_logging(__name__)
 
 # Get the absolute path to the project root
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-DB_PATH = str(PROJECT_ROOT / "databases" / "recruitment.db")
+DB_PATH = os.getenv("RECRUITMENT_PATH", str(PROJECT_ROOT / "databases" / "recruitment.db"))
+
+# Ensure database directory exists
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # Initialize database
 db = RecruitmentDatabase(DB_PATH)
