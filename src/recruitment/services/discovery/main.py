@@ -10,6 +10,7 @@ import os
 import json
 import logging
 import time
+import csv
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
@@ -114,6 +115,8 @@ class RecruitmentAdSearch:
 
             parsed = urlparse(url)
             domain = parsed.netloc.lower()
+            
+            logger.debug(f"Checking domain: {domain}")
 
             if any(excluded in domain for excluded in self.excluded_domains):
                 logger.debug(f"Excluded domain: {url}")
@@ -151,8 +154,66 @@ class RecruitmentAdSearch:
         logger.info(f"Constructed query: {final_query}")
         return final_query
 
+    def read_urls_from_csv(self, max_results: int = 200) -> List[str]:
+        """Read URLs from CSV files in the data directory."""
+        urls = []
+        # Check the mounted CSV directory
+        csv_dir = "/app/csvs"
+        
+        try:
+            if not os.path.exists(csv_dir):
+                logger.error(f"CSV directory does not exist: {csv_dir}")
+                return []
+                
+            # Get all CSV files from the directory
+            csv_files = [os.path.join(csv_dir, f) for f in os.listdir(csv_dir) if f.endswith('.csv')]
+            logger.info(f"Found {len(csv_files)} CSV files in {csv_dir}: {csv_files}")
+            
+            if not csv_files:
+                logger.error(f"No CSV files found in directory: {csv_dir}")
+                return []
+            
+            for file_path in csv_files:
+                logger.info(f"Reading URLs from {file_path}")
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        row_count = 0
+                        valid_urls = 0
+                        for row in reader:
+                            row_count += 1
+                            if 'URL' not in row:
+                                logger.error(f"CSV file {file_path} does not contain 'URL' column. Available columns: {list(row.keys())}")
+                                continue
+                                
+                            url = row['URL']
+                            if self.is_valid_recruitment_site(url):
+                                urls.append(url)
+                                valid_urls += 1
+                                if len(urls) >= max_results:
+                                    logger.info(f"Reached max_results limit of {max_results}")
+                                    return urls
+                            
+                        logger.info(f"Processed {row_count} rows from {file_path}, found {valid_urls} valid URLs")
+                            
+                except Exception as e:
+                    logger.error(f"Error reading file {file_path}: {str(e)}")
+                    continue
+                            
+            logger.info(f"Successfully read {len(urls)} valid URLs from all CSV files")
+            return urls
+            
+        except Exception as e:
+            logger.error(f"Error reading CSV files: {e}")
+            return []
+
     def fetch_ads_with_retry(self, query: str, max_results: int = 200, max_retries: int = 3) -> List[str]:
-        """Fetch articles with retry logic for transient failures."""
+        """Fetch articles from CSV files instead of Google search."""
+        # Temporarily disabled Google search in favor of CSV reading
+        return self.read_urls_from_csv(max_results=max_results)
+        
+        # Original Google search code (commented out for now)
+        """
         articles = []
         retry_count = 0
         
@@ -189,6 +250,7 @@ class RecruitmentAdSearch:
                 else:
                     logger.error(f"Failed to fetch articles after {max_retries} attempts: {str(e)}")
                     return []
+        """
 
     def get_date_range(self) -> tuple[str, str]:
         """Get the date range for the search."""
@@ -213,24 +275,51 @@ class RecruitmentAdSearch:
 async def publish_urls_to_queue(urls: List[str], search_id: str):
     """Publish URLs to RabbitMQ queue."""
     try:
-        connection = await get_rabbitmq_connection()
-        channel = await connection.channel()
-        for url in urls:
-            await channel.default_exchange.publish(
-                aio_pika.Message(
+        # Create a new connection for this operation
+        connection = await aio_pika.connect_robust(
+            host=os.getenv("RABBITMQ_HOST", "localhost"),
+            port=int(os.getenv("RABBITMQ_PORT", 5672)),
+            login=os.getenv("RABBITMQ_USER", "guest"),
+            password=os.getenv("RABBITMQ_PASSWORD", "guest"),
+            heartbeat=60,
+        )
+        
+        async with connection:
+            channel = await connection.channel()
+            
+            # Declare the queue to ensure it exists
+            queue = await channel.declare_queue(
+                RABBIT_QUEUE,
+                durable=True
+            )
+            
+            logger.info(f"Starting to publish {len(urls)} URLs to RabbitMQ queue")
+            
+            for i, url in enumerate(urls, 1):
+                message = aio_pika.Message(
                     body=json.dumps({
                         "url": url,
                         "search_id": search_id,
                         "timestamp": datetime.now().isoformat()
                     }).encode(),
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-                ),
-                routing_key=RABBIT_QUEUE,
-            )
-        logger.info(f"Published {len(urls)} URLs to RabbitMQ queue")
+                )
+                
+                await channel.default_exchange.publish(
+                    message,
+                    routing_key=RABBIT_QUEUE
+                )
+                
+                if i % 10 == 0:  # Log progress every 10 URLs
+                    logger.info(f"Published {i}/{len(urls)} URLs to queue")
+                    
+            logger.info(f"Successfully published all {len(urls)} URLs to RabbitMQ queue")
+            
     except Exception as e:
         logger.error(f"Error publishing to RabbitMQ queue: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to publish URLs: {str(e)}")
+        # Don't raise HTTPException here as it's a background task
+        search_results[search_id]["status"] = "error"
+        search_results[search_id]["error"] = str(e)
 
 async def perform_search(search_config: SearchConfig, background_tasks: BackgroundTasks) -> SearchResponse:
     """Perform a search for recruitment URLs."""
@@ -250,14 +339,18 @@ async def perform_search(search_config: SearchConfig, background_tasks: Backgrou
         search_results[search_id]["urls"] = urls
         search_results[search_id]["urls_found"] = len(urls)
         
-        background_tasks.add_task(publish_urls_to_queue, urls, search_id)
-        
-        return SearchResponse(
+        # Create response first
+        response = SearchResponse(
             search_id=search_id,
             urls_found=len(urls),
             urls=urls,
             timestamp=datetime.now().isoformat()
         )
+        
+        # Then add the background task
+        background_tasks.add_task(publish_urls_to_queue, urls, search_id)
+        
+        return response
         
     except Exception as e:
         logger.error(f"Error creating search: {e}")

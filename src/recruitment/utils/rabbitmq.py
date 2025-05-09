@@ -9,22 +9,20 @@ RABBIT_QUEUE = "recruitment_urls"
 
 logger = logging.getLogger(__name__)
 
-@lru_cache(maxsize=1)
-async def get_rabbitmq_connection() -> aio_pika.Connection:
-    """Return a singleton connection to RabbitMQ."""
-    try:
-        connection = await aio_pika.connect_robust(
-            host=os.getenv("RABBITMQ_HOST", "localhost"),
+_connection: aio_pika.RobustConnection | None = None
+
+async def get_rabbitmq_connection() -> aio_pika.RobustConnection:
+    global _connection
+    if _connection is None or _connection.is_closed:
+        _connection = await aio_pika.connect_robust(
+            host=os.getenv("RABBITMQ_HOST", "rabbitmq"),
             port=int(os.getenv("RABBITMQ_PORT", 5672)),
             login=os.getenv("RABBITMQ_USER", "guest"),
             password=os.getenv("RABBITMQ_PASSWORD", "guest"),
             heartbeat=60,
         )
-        logger.info(f"Successfully connected to RabbitMQ at {os.getenv('RABBITMQ_HOST', 'localhost')}")
-        return connection
-    except Exception as e:
-        logger.error(f"Failed to connect to RabbitMQ: {str(e)}")
-        raise
+        logger.info(f"Successfully connected to RabbitMQ at {os.getenv('RABBITMQ_HOST', 'rabbitmq')}")
+    return _connection
 
 async def get_channel() -> aio_pika.abc.AbstractChannel:
     """Get a channel from the RabbitMQ connection."""
