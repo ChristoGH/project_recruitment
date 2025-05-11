@@ -159,6 +159,90 @@ And readiness probes:
 - Discovery Service: `http://localhost:8000/readyz`
 - Processing Service: `http://localhost:8001/readyz`
 
+## Docker Log Commands
+
+To monitor the services and debug issues, you can use the following Docker log commands:
+
+```bash
+# View all container logs
+docker compose logs
+
+# View logs for specific services
+docker compose logs url_discovery
+docker compose logs url_processing
+docker compose logs rabbitmq
+
+# Follow logs in real-time
+docker compose logs -f
+docker compose logs -f url_discovery
+docker compose logs -f url_processing
+
+# View last N lines
+docker compose logs --tail=100 url_discovery
+docker compose logs --tail=100 url_processing
+
+# View logs since timestamp
+docker compose logs --since="2024-03-20T10:00:00" url_discovery
+
+# View logs with timestamps
+docker compose logs -t url_discovery
+
+# View logs for a specific container
+docker logs project_recruitment-url_discovery-1
+docker logs project_recruitment-url_processing-1
+
+# View container logs directly from the host
+docker exec -it project_recruitment-url_discovery-1 cat /app/logs/src.recruitment.services.discovery.main.log
+docker exec -it project_recruitment-url_processing-1 cat /app/logs/src.recruitment.services.processing.main.log
+docker exec -it project_recruitment-url_processing-1 cat /app/logs/web_crawler_lib.log
+```
+
+## Web Scraping Logs
+
+To monitor web scraping activities and results, check these specific log files:
+
+```bash
+# Main web crawler logs (most detailed)
+docker exec -it project_recruitment-url_processing-1 cat /app/logs/web_crawler_lib.log
+
+# Processing service logs (crawling status and results)
+docker exec -it project_recruitment-url_processing-1 cat /app/logs/src.recruitment.services.processing.main.log
+
+# URL processing service logs (overall processing status)
+docker exec -it project_recruitment-url_processing-1 cat /app/logs/url_processing_service.log
+
+# Follow web crawler logs in real-time
+docker exec -it project_recruitment-url_processing-1 tail -f /app/logs/web_crawler_lib.log
+
+# View last 100 lines of crawler logs
+docker exec -it project_recruitment-url_processing-1 tail -n 100 /app/logs/web_crawler_lib.log
+
+# Search for successful crawls
+docker exec -it project_recruitment-url_processing-1 grep "success=True" /app/logs/web_crawler_lib.log
+
+# Search for failed crawls
+docker exec -it project_recruitment-url_processing-1 grep "success=False" /app/logs/web_crawler_lib.log
+```
+
+The logs contain the following information:
+- `web_crawler_lib.log`: Detailed crawling process, including:
+  - URL access attempts
+  - Content extraction results
+  - Success/failure status
+  - Markdown content length
+  - Error messages if any
+
+- `src.recruitment.services.processing.main.log`: Processing service logs showing:
+  - Crawl initiation
+  - Result handling
+  - Database storage status
+  - Error states
+
+- `url_processing_service.log`: Overall service logs including:
+  - Service health
+  - Queue processing status
+  - Overall success/failure rates
+
 ## Contributing
 
 1. Fork the repository

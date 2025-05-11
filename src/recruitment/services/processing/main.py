@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ...logging_config import setup_logging
 from ...utils.rabbitmq import get_rabbitmq_connection, RABBIT_QUEUE
-from ...utils.web_crawler import crawl_website_sync_v2
+from ...utils.web_crawler_wrapper import crawl_website
 
 # Load environment variables
 load_dotenv()
@@ -109,9 +109,9 @@ async def store_url_content(url: str, search_id: str):
     try:
         logger.info(f"Starting to process URL: {url}")
         
-        # Run the synchronous web crawler in a separate thread
+        # Run the web crawler
         logger.info(f"Starting web crawl for URL: {url}")
-        result = await asyncio.to_thread(crawl_website_sync_v2, url)
+        result = await crawl_website(url)
         logger.info(f"Web crawl completed for URL: {url}, success: {result.success}")
         
         # Store in database
