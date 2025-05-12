@@ -10,12 +10,11 @@ import os
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Set, Annotated
+from typing import List, Dict, Any, Optional, Set, Annotated, Depends
 from urllib.parse import urlparse
 from googlesearch import search
 from pydantic import BaseModel, Field, validator
-from pydantic_settings import BaseSettings
-from fastapi import FastAPI, BackgroundTasks, HTTPException, status, Depends
+from fastapi import FastAPI, BackgroundTasks, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 from dotenv import load_dotenv
@@ -27,14 +26,174 @@ from functools import partial
 from asyncio import to_thread, sleep
 from dataclasses import dataclass
 import logging.handlers
-import json_logging
-
 from ...logging_config import setup_logging
 from ...utils.rabbitmq import RabbitMQConnection, get_rabbitmq_connection, RABBIT_QUEUE
 from ...models.url_models import URLDiscoveryConfig, transform_skills_response
-from ...utils.web_crawler import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
 from ...db.repository import RecruitmentDatabase
 from ...utils.url_loader import load_urls_from_directory
+from ...config import settings
+
+async def perform_scheduled_search():
+    """Perform scheduled search for recruitment URLs."""
+    try:
+        # Create a default search config
+        search_config = SearchConfig(
+            id="scheduled_search",
+            days_back=settings.search_days_back,
+            batch_size=settings.google_search_batch_size,
+            search_interval_seconds=settings.search_interval_seconds
+        )
+        
+        # Perform the search
+        searcher = RecruitmentAdSearch(search_config)
+        urls = await searcher.get_recent_ads()
+        
+        # Publish URLs to queue
+        if urls:
+            channel = await get_rabbitmq_channel()
+            await publish_urls_to_queue(urls, search_config.id, channel)
+            
+        logger.info("Completed scheduled search", extra={
+            "urls_found": len(urls),
+            "search_id": search_config.id
+        })
+        
+    except Exception as e:
+        logger.error("Error in scheduled search", extra={
+            "error": str(e),
+            "search_id": "scheduled_search"
+        })
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for FastAPI app."""
+    # Initialize database
+    app.state.db = RecruitmentDatabase()
+    await app.state.db.initialize()
+    
+    # Initialize RabbitMQ connection
+    app.state.rabbitmq_channel = await get_rabbitmq_connection()
+    
+    # Initialize scheduler
+    app.state.scheduler = AsyncIOScheduler()
+    app.state.scheduler.start()
+    
+    # Schedule initial search task
+    app.state.scheduler.add_job(
+        perform_scheduled_search,
+        'interval',
+        seconds=settings.search_interval_seconds,
+        id='url_discovery_search'
+    )
+    
+    yield
+    
+    # Cleanup
+    if hasattr(app.state, 'db'):
+        await app.state.db.close()
+    if hasattr(app.state, 'scheduler'):
+        app.state.scheduler.shutdown()
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="URL Discovery Service",
+    description="Service for discovering and publishing recruitment URLs",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+async def publish_urls_to_queue(urls: List[str], search_id: str, channel: aio_pika.Channel):
+    """Publish URLs to RabbitMQ queue."""
+    try:
+        logger.info(f"Starting to publish {len(urls)} URLs to RabbitMQ queue")
+        
+        # Process URLs in batches
+        for i in range(0, len(urls), settings.publish_batch_size):
+            batch = urls[i:i + settings.publish_batch_size]
+            messages = []
+            
+            # Prepare batch of messages
+            for url in batch:
+                message = aio_pika.Message(
+                    body=json.dumps({
+                        "url": url,
+                        "search_id": search_id,
+                        "timestamp": datetime.now().isoformat()
+                    }).encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                )
+                messages.append(message)
+            
+            # Publish batch
+            for message in messages:
+                await channel.default_exchange.publish(
+                    message,
+                    routing_key=RABBIT_QUEUE
+                )
+            
+            logger.info(f"Published batch {i//settings.publish_batch_size + 1} of {(len(urls) + settings.publish_batch_size - 1)//settings.publish_batch_size}")
+                
+        logger.info(f"Successfully published all {len(urls)} URLs to RabbitMQ queue")
+        
+    except Exception as e:
+        logger.error(f"Error publishing to RabbitMQ queue: {e}")
+        search_results.update_status(search_id, "error", str(e))
+
+async def get_rabbitmq_channel() -> aio_pika.Channel:
+    """Get or create a RabbitMQ channel."""
+    try:
+        if not hasattr(app.state, 'rabbitmq_channel') or app.state.rabbitmq_channel.is_closed:
+            if hasattr(app.state, 'rabbitmq_channel'):
+                await app.state.rabbitmq_channel.close()  # tidy leak
+            app.state.rabbitmq_channel = await get_rabbitmq_connection()
+            # Declare queue once per channel lifecycle
+            await app.state.rabbitmq_channel.declare_queue(RABBIT_QUEUE, durable=True)
+        return app.state.rabbitmq_channel
+    except Exception as e:
+        logger.error(f"Error getting RabbitMQ channel: {e}")
+        raise
+
+# Helper functions
+async def get_db() -> RecruitmentDatabase:
+    """Get database instance."""
+    if not hasattr(app.state, 'db'):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database not initialized"
+        )
+    return app.state.db
+
+async def get_rabbitmq() -> aio_pika.Channel:
+    """Get RabbitMQ channel."""
+    if not hasattr(app.state, 'rabbitmq_channel'):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RabbitMQ not initialized"
+        )
+    return app.state.rabbitmq_channel
+
+async def get_scheduler() -> AsyncIOScheduler:
+    """Get scheduler instance."""
+    if not hasattr(app.state, 'scheduler'):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduler not initialized"
+        )
+    return app.state.scheduler
+
+# Type aliases for dependencies
+DB = Annotated[RecruitmentDatabase, Depends(get_db)]
+RabbitMQ = Annotated[aio_pika.Channel, Depends(get_rabbitmq)]
+Scheduler = Annotated[AsyncIOScheduler, Depends(get_scheduler)]
 
 # Load environment variables
 load_dotenv()
@@ -57,41 +216,13 @@ class JSONFormatter(logging.Formatter):
 
 # Create module-specific logger with JSON formatting
 logger = setup_logging(__name__)
-handler = logging.StreamHandler()
-handler.setFormatter(JSONFormatter())
-logger.addHandler(handler)
+# Replace the formatter on the existing handler instead of adding a new one
+for h in logger.handlers:
+    h.setFormatter(JSONFormatter())
 
 # Get the absolute path to the project root
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DEFAULT_DB_PATH = str(PROJECT_ROOT / "databases" / "recruitment.db")
-
-class Settings(BaseSettings):
-    """Application settings."""
-    # --- RabbitMQ ---
-    rabbitmq_host: str = Field(default="localhost", env="RABBITMQ_HOST")
-    rabbitmq_port: int = Field(default=5672, env="RABBITMQ_PORT")
-    rabbitmq_user: str = Field(default="guest", env="RABBITMQ_USER")
-    rabbitmq_password: str = Field(default="guest", env="RABBITMQ_PASSWORD")
-    rabbitmq_vhost: str = Field(default="/", env="RABBITMQ_VHOST")
-    
-    # --- Database ---
-    recruitment_db_url: str = Field(default=DEFAULT_DB_PATH, env="RECRUITMENT_DB_URL")
-    
-    # --- Search Configuration ---
-    search_days_back: int = Field(default=7, env="SEARCH_DAYS_BACK")
-    search_interval_seconds: int = Field(default=1800, env="SEARCH_INTERVAL_SECONDS")  # 30 minutes
-    
-    # --- Batch Sizes ---
-    google_search_batch_size: int = Field(default=50, env="GOOGLE_SEARCH_BATCH_SIZE")
-    publish_batch_size: int = Field(default=50, env="PUBLISH_BATCH_SIZE")
-    csv_read_batch_size: int = Field(default=200, env="CSV_READ_BATCH_SIZE")
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-
-# Initialize settings
-settings = Settings()
 
 # Pydantic models for API
 class SearchConfig(BaseModel):
@@ -149,36 +280,40 @@ class SearchResultsCache:
     """Cache for storing search results."""
     def __init__(self):
         self._results: Dict[str, SearchResult] = {}
+        self._lock = asyncio.Lock()
     
-    def add(self, search_id: str, urls: List[str] = None) -> None:
+    async def add(self, search_id: str, urls: List[str] = None) -> None:
         """Add a new search result."""
-        self._results[search_id] = SearchResult(
-            search_id=search_id,
-            status="pending",
-            urls_found=len(urls) if urls else 0,
-            urls=urls or [],
-            timestamp=datetime.now().isoformat()
-        )
-        logger.info("Added new search result", extra={
-            "search_id": search_id,
-            "urls_found": len(urls) if urls else 0
-        })
-    
-    def update_status(self, search_id: str, status: str, error: str = None) -> None:
-        """Update the status of a search result."""
-        if search_id in self._results:
-            self._results[search_id].status = status
-            if error:
-                self._results[search_id].error = error
-            logger.info("Updated search status", extra={
+        async with self._lock:
+            self._results[search_id] = SearchResult(
+                search_id=search_id,
+                status="pending",
+                urls_found=len(urls) if urls else 0,
+                urls=urls or [],
+                timestamp=datetime.now().isoformat()
+            )
+            logger.info("Added new search result", extra={
                 "search_id": search_id,
-                "status": status,
-                "error": error
+                "urls_found": len(urls) if urls else 0
             })
     
-    def get(self, search_id: str) -> Optional[SearchResult]:
+    async def update_status(self, search_id: str, status: str, error: str = None) -> None:
+        """Update the status of a search result."""
+        async with self._lock:
+            if search_id in self._results:
+                self._results[search_id].status = status
+                if error:
+                    self._results[search_id].error = error
+                logger.info("Updated search status", extra={
+                    "search_id": search_id,
+                    "status": status,
+                    "error": error
+                })
+    
+    async def get(self, search_id: str) -> Optional[SearchResult]:
         """Get a search result by ID."""
-        return self._results.get(search_id)
+        async with self._lock:
+            return self._results.get(search_id)
 
 # Initialize the cache
 search_results = SearchResultsCache()
@@ -195,19 +330,13 @@ def is_valid_url(url: str) -> bool:
     Note:
         Performs checks in order of computational cost:
         1. Basic URL format (scheme, netloc)
-        2. Dangerous schemes
-        3. Domain validation
+        2. Domain validation
     """
     try:
         result = urlparse(url)
         # Check scheme first (cheapest check)
         if result.scheme not in {"http", "https"}:
             logger.debug("Invalid URL scheme", extra={"url": url, "scheme": result.scheme})
-            return False
-            
-        # Check for dangerous schemes
-        if result.scheme in {"data", "javascript", "vbscript", "file"}:
-            logger.debug("Dangerous URL scheme", extra={"url": url, "scheme": result.scheme})
             return False
             
         # Check netloc (domain)
@@ -388,78 +517,25 @@ class RecruitmentAdSearch:
         
         return ads[:self.batch_size]  # Limit to batch size
 
-async def get_rabbitmq_channel():
-    """Get or create a RabbitMQ channel."""
-    if not hasattr(app.state, 'rabbitmq') or app.state.rabbitmq.is_closed:
-        connection = await get_rabbitmq_connection()
-        app.state.rabbitmq = connection
-    
-    if not hasattr(app.state, 'rabbitmq_channel'):
-        app.state.rabbitmq_channel = await app.state.rabbitmq.channel()
-    
-    return app.state.rabbitmq_channel
-
-async def publish_urls_to_queue(urls: List[str], search_id: str, channel: aio_pika.Channel):
-    """Publish URLs to RabbitMQ queue."""
-    try:
-        # Declare the queue to ensure it exists
-        queue = await channel.declare_queue(
-            RABBIT_QUEUE,
-            durable=True
-        )
-        
-        logger.info(f"Starting to publish {len(urls)} URLs to RabbitMQ queue")
-        
-        # Process URLs in batches
-        for i in range(0, len(urls), settings.publish_batch_size):
-            batch = urls[i:i + settings.publish_batch_size]
-            messages = []
-            
-            # Prepare batch of messages
-            for url in batch:
-                message = aio_pika.Message(
-                    body=json.dumps({
-                        "url": url,
-                        "search_id": search_id,
-                        "timestamp": datetime.now().isoformat()
-                    }).encode(),
-                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-                )
-                messages.append(message)
-            
-            # Publish batch
-            for message in messages:
-                await channel.default_exchange.publish(
-                    message,
-                    routing_key=RABBIT_QUEUE
-                )
-            
-            logger.info(f"Published batch {i//settings.publish_batch_size + 1} of {(len(urls) + settings.publish_batch_size - 1)//settings.publish_batch_size}")
-                
-        logger.info(f"Successfully published all {len(urls)} URLs to RabbitMQ queue")
-        
-    except Exception as e:
-        logger.error(f"Error publishing to RabbitMQ queue: {e}")
-        search_results.update_status(search_id, "error", str(e))
-
 async def perform_search(
     search_config: SearchConfig,
     background_tasks: BackgroundTasks,
     db: DB,
-    rabbitmq: RabbitMQ,
-    scheduler: Scheduler
+    rabbitmq: RabbitMQ
 ) -> SearchResponse:
     """Perform a search for recruitment URLs."""
     try:
         search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        search_results.add(search_id)
+        await search_results.add(search_id)
         
         searcher = RecruitmentAdSearch(search_config)
         urls = await searcher.get_recent_ads()
         
-        search_results.update_status(search_id, "completed")
-        search_results.add(search_id, urls)
+        async with search_results._lock:
+            search_results._results[search_id].urls = urls
+            search_results._results[search_id].urls_found = len(urls)
+        await search_results.update_status(search_id, "completed")
         
         # Create response first
         response = SearchResponse(
@@ -478,154 +554,20 @@ async def perform_search(
         logger.error(f"Error creating search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-async def perform_scheduled_search(search_config: SearchConfig):
-    """Perform scheduled search for recruitment URLs."""
-    search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
-    try:
-        logger.info(f"Starting scheduled search with config: {search_config.id}")
-        
-        search_results.add(search_id)
-        
-        searcher = RecruitmentAdSearch(search_config)
-        urls = await searcher.get_recent_ads()
-        
-        # Limit URLs to batch size
-        urls = urls[:search_config.batch_size]
-        
-        search_results.update_status(search_id, "completed", None)
-        search_results.add(search_id, urls)
-        
-        # Publish URLs to queue
-        await publish_urls_to_queue(urls, search_id)
-        
-        logger.info(f"Completed scheduled search. Found {len(urls)} URLs.")
-        
-    except Exception as e:
-        logger.error(f"Error in scheduled search: {e}")
-        search_results.update_status(search_id, "error", str(e))
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan context manager for FastAPI application."""
-    # Initialize database
-    if not os.path.exists(settings.recruitment_db_url):
-        raise RuntimeError(f"Database file not found at {settings.recruitment_db_url}. This is a required volume mount.")
-    
-    db = RecruitmentDatabase(settings.recruitment_db_url)
-    db.initialize()
-    app.state.db = db
-    
-    # Initialize RabbitMQ connection
-    try:
-        connection = await get_rabbitmq_connection(
-            host=settings.rabbitmq_host,
-            port=settings.rabbitmq_port,
-            user=settings.rabbitmq_user,
-            password=settings.rabbitmq_password,
-            vhost=settings.rabbitmq_vhost
-        )
-        app.state.rabbitmq = connection
-        channel = await connection.channel()
-        app.state.rabbitmq_channel = channel
-        await channel.declare_queue(RABBIT_QUEUE, durable=True)
-        logger.info("RabbitMQ queue declared successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize RabbitMQ: {e}")
-        raise
-
-    # Initialize scheduler
-    scheduler = AsyncIOScheduler()
-    scheduler.start()
-    app.state.scheduler = scheduler
-    logger.info("Scheduler started")
-
-    # Add initial search task
-    search_config = SearchConfig(
-        id="initial_search",
-        days_back=settings.search_days_back,
-        batch_size=settings.google_search_batch_size,
-        search_interval_seconds=settings.search_interval_seconds
-    )
-    scheduler.add_job(
-        perform_scheduled_search,
-        'interval',
-        seconds=settings.search_interval_seconds,
-        args=[search_config],
-        id="recruitment_search"
-    )
-    logger.info("Initial search task scheduled")
-
-    yield
-
-    # Cleanup
-    scheduler.shutdown(wait=False)
-    if hasattr(app.state, 'rabbitmq') and not app.state.rabbitmq.is_closed:
-        await app.state.rabbitmq.close()
-
-app = FastAPI(
-    title="URL Discovery Service",
-    description="Service for discovering recruitment URLs and publishing them to a queue",
-    version="1.0.0",
-    lifespan=lifespan
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Dependencies
-async def get_db() -> RecruitmentDatabase:
-    """Get database instance."""
-    if not hasattr(app.state, 'db'):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database not initialized"
-        )
-    return app.state.db
-
-async def get_rabbitmq() -> aio_pika.Channel:
-    """Get RabbitMQ channel."""
-    if not hasattr(app.state, 'rabbitmq_channel'):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="RabbitMQ not initialized"
-        )
-    return app.state.rabbitmq_channel
-
-async def get_scheduler() -> AsyncIOScheduler:
-    """Get scheduler instance."""
-    if not hasattr(app.state, 'scheduler'):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduler not initialized"
-        )
-    return app.state.scheduler
-
-# Type aliases for dependencies
-DB = Annotated[RecruitmentDatabase, Depends(get_db)]
-RabbitMQ = Annotated[aio_pika.Channel, Depends(get_rabbitmq)]
-Scheduler = Annotated[AsyncIOScheduler, Depends(get_scheduler)]
-
+# Route handlers
 @app.post("/search", response_model=SearchResponse)
 async def create_search(
     search_config: SearchConfig,
     background_tasks: BackgroundTasks,
     db: DB,
-    rabbitmq: RabbitMQ,
-    scheduler: Scheduler
+    rabbitmq: RabbitMQ
 ) -> SearchResponse:
     """Create a new search for recruitment URLs."""
     return await perform_search(
         search_config=search_config,
         background_tasks=background_tasks,
         db=db,
-        rabbitmq=rabbitmq,
-        scheduler=scheduler
+        rabbitmq=rabbitmq
     )
 
 @app.get("/search/{search_id}", response_model=SearchStatus)
@@ -634,7 +576,7 @@ async def get_search_status(
     db: DB
 ) -> SearchStatus:
     """Get the status of a search."""
-    result = search_results.get(search_id)
+    result = await search_results.get(search_id)
     if not result:
         raise HTTPException(status_code=404, detail=f"Search ID {search_id} not found")
     
@@ -651,7 +593,7 @@ async def get_search_urls(
     db: DB
 ) -> List[str]:
     """Get the URLs found by a search."""
-    result = search_results.get(search_id)
+    result = await search_results.get(search_id)
     if not result:
         raise HTTPException(status_code=404, detail=f"Search ID {search_id} not found")
     

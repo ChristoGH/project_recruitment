@@ -27,7 +27,7 @@ services:
       - RABBITMQ_VHOST=/
       - RECRUITMENT_DB_URL=/app/src/recruitment/db/recruitment.db
       - SEARCH_DAYS_BACK=7
-      - SEARCH_INTERVAL_MINUTES=30
+      - SEARCH_INTERVAL_SECONDS=1800
       - GOOGLE_SEARCH_BATCH_SIZE=50
       - PUBLISH_BATCH_SIZE=50
       - MAX_CONCURRENT_REQUESTS=5
