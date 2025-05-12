@@ -68,8 +68,8 @@ class SearchConfig(BaseModel):
         "site:joburg.co.za hiring"
     ]
     locations: List[str] = ["South Africa"]
-    batch_size: int = 5
-    search_interval_minutes: int = 5
+    batch_size: int = 50
+    search_interval_minutes: int = 30
 
 class SearchResponse(BaseModel):
     search_id: str
@@ -245,7 +245,7 @@ class RecruitmentAdSearch:
         logger.info(f"Searching for recruitment ads with query: {query}")
         
         ads = self.fetch_ads_with_retry(query)
-        ads = ads[:5]  # hard guarantee of 5 results
+        
         logger.info(f"Retrieved {len(ads)} recruitment ads in the past {self.days_back} day(s).")
         
         return ads
@@ -386,8 +386,8 @@ async def lifespan(app: FastAPI):
     search_config = SearchConfig(
         id="initial_search",
         days_back=7,
-        batch_size=5,
-        search_interval_minutes=5
+        batch_size=50,
+        search_interval_minutes=30
     )
     scheduler.add_job(
         perform_scheduled_search,
