@@ -1,6 +1,6 @@
 services:
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:3.13-management
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -9,6 +9,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - recruitment_network
 
   url_discovery:
     build:
@@ -23,12 +25,15 @@ services:
       - RABBITMQ_USER=guest
       - RABBITMQ_PASSWORD=guest
       - RABBITMQ_VHOST=/
-      - RECRUITMENT_PATH=/app/src/recruitment/db/recruitment.db
+      - RECRUITMENT_DB_URL=/app/src/recruitment/db/recruitment.db
+      - SEARCH_DAYS_BACK=7
+      - BATCH_SIZE=50
+      - SEARCH_INTERVAL_MINUTES=30
     depends_on:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -36,6 +41,8 @@ services:
       - ./src/recruitment/db:/app/src/recruitment/db
       - recruitment_logs:/app/logs
       - ./csvs:/app/csvs:ro
+    networks:
+      - recruitment_network
 
   url_processing:
     build:
@@ -49,18 +56,20 @@ services:
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=guest
       - RABBITMQ_PASSWORD=guest
-      - RECRUITMENT_PATH=/app/src/recruitment/db/recruitment.db
+      - RECRUITMENT_DB_URL=/app/src/recruitment/db/recruitment.db
     depends_on:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
     volumes:
       - ./src/recruitment/db:/app/src/recruitment/db
       - recruitment_logs:/app/logs
+    networks:
+      - recruitment_network
 
 volumes:
   recruitment_logs:

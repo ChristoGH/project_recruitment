@@ -5,9 +5,10 @@ import os
 from pathlib import Path
 import json
 from logging.handlers import RotatingFileHandler
-from typing import Optional
+from typing import Optional, Any, Dict
 import sys
 import structlog
+from datetime import datetime
 
 # Get the project root directory
 project_root = Path(__file__).parent.parent.parent
@@ -26,6 +27,35 @@ class SensitiveDataFilter(logging.Filter):
                 # Simple pattern replacement, could be more sophisticated
                 record.msg = record.msg.replace(pattern, '****REDACTED****')
         return True
+
+
+class JSONFormatter(logging.Formatter):
+    """JSON formatter for structured logging."""
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """Format the log record as JSON."""
+        log_data: Dict[str, Any] = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        
+        # Add exception info if present
+        if record.exc_info:
+            log_data["exception"] = {
+                "type": record.exc_info[0].__name__,
+                "message": str(record.exc_info[1]),
+                "traceback": self.formatException(record.exc_info)
+            }
+        
+        # Add extra fields if present
+        if hasattr(record, "extra"):
+            log_data.update(record.extra)
+        
+        return json.dumps(log_data)
 
 
 def setup_logging(name: str, level: str = None) -> logging.Logger:
@@ -47,20 +77,9 @@ def setup_logging(name: str, level: str = None) -> logging.Logger:
     logger.handlers = []
     
     # Create formatters
-    file_formatter = structlog.stdlib.ProcessorFormatter(
-        processor=structlog.processors.JSONRenderer(),
-        foreign_pre_chain=[
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.stdlib.add_logger_name,
-            structlog.stdlib.add_log_level,
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-        ]
-    )
+    file_formatter = JSONFormatter()
     
-    console_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - [%(threadName)s] - %(message)s"
-    )
+    console_formatter = JSONFormatter()
     
     # Create file handler
     log_file = os.path.join(log_dir, f"{name}.log")
