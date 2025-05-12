@@ -68,8 +68,8 @@ class SearchConfig(BaseModel):
         "site:joburg.co.za hiring"
     ]
     locations: List[str] = ["South Africa"]
-    batch_size: int = 100
-    search_interval_minutes: int = 60
+    batch_size: int = 5
+    search_interval_minutes: int = 5
 
 class SearchResponse(BaseModel):
     search_id: str
@@ -207,50 +207,27 @@ class RecruitmentAdSearch:
             logger.error(f"Error reading CSV files: {e}")
             return []
 
-    def fetch_ads_with_retry(self, query: str, max_results: int = 200, max_retries: int = 3) -> List[str]:
-        """Fetch articles from CSV files instead of Google search."""
-        # Temporarily disabled Google search in favor of CSV reading
-        return self.read_urls_from_csv(max_results=max_results)
-        
-        # Original Google search code (commented out for now)
-        """
-        articles = []
-        retry_count = 0
-        
-        while retry_count < max_retries:
+    def fetch_ads_with_retry(self, query: str, max_results: int = 5, max_retries: int = 3) -> List[str]:
+        """Fetch recruitment ads via live Google Search."""
+        articles: list[str] = []
+        for attempt in range(max_retries):
             try:
-                # Try with tld parameter first
-                try:
-                    results = search(query, tld="com", lang="en", num=10, start=0, stop=max_results, pause=2)
-                except TypeError:
-                    # Fall back to version without tld parameter
-                    results = search(query, lang="en", num_results=100, sleep_interval=5)
-
-                # Validate and filter results
+                results = search(query, lang="en", num=10, start=0, stop=max_results, pause=2)
                 for url in results:
                     if self.is_valid_recruitment_site(url):
                         articles.append(url)
                         logger.info(f"Found valid URL: {url}")
                 
-                # Log results per search term
-                for term in self.recruitment_terms:
-                    term_results = [url for url in articles if term.lower() in url.lower()]
-                    logger.info(f"Found {len(term_results)} results for term: {term}")
-                
                 if len(articles) == 0:
                     logger.warning(f"No results found for query: {query}")
-                
-                return articles
-                
-            except Exception as e:
-                retry_count += 1
-                logger.warning(f"Attempt {retry_count} failed: {str(e)}")
-                if retry_count < max_retries:
-                    time.sleep(2 ** retry_count)  # Exponential backoff
                 else:
-                    logger.error(f"Failed to fetch articles after {max_retries} attempts: {str(e)}")
-                    return []
-        """
+                    logger.info(f"Found {len(articles)} valid URLs")
+                
+                return articles[:max_results]
+            except Exception as exc:
+                logger.warning("Google search failed on attempt %s/%s: %s", attempt + 1, max_retries, exc)
+                time.sleep(2 ** attempt)  # exponential back-off
+        return articles[:max_results]
 
     def get_date_range(self) -> tuple[str, str]:
         """Get the date range for the search."""
@@ -268,6 +245,7 @@ class RecruitmentAdSearch:
         logger.info(f"Searching for recruitment ads with query: {query}")
         
         ads = self.fetch_ads_with_retry(query)
+        ads = ads[:5]  # hard guarantee of 5 results
         logger.info(f"Retrieved {len(ads)} recruitment ads in the past {self.days_back} day(s).")
         
         return ads
@@ -408,8 +386,8 @@ async def lifespan(app: FastAPI):
     search_config = SearchConfig(
         id="initial_search",
         days_back=7,
-        batch_size=100,
-        search_interval_minutes=60
+        batch_size=5,
+        search_interval_minutes=5
     )
     scheduler.add_job(
         perform_scheduled_search,
