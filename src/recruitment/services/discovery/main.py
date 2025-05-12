@@ -10,11 +10,11 @@ import os
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional, Set, Annotated, Depends
+from typing import List, Dict, Any, Optional, Set, Annotated
 from urllib.parse import urlparse
 from googlesearch import search
 from pydantic import BaseModel, Field, field_validator
-from fastapi import FastAPI, BackgroundTasks, HTTPException, status
+from fastapi import FastAPI, BackgroundTasks, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 from dotenv import load_dotenv
