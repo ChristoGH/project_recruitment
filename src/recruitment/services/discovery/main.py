@@ -9,11 +9,11 @@ It's based on the working recruitment_ad_search.py script.
 import os
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Set, Annotated, Depends
 from urllib.parse import urlparse
 from googlesearch import search
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from fastapi import FastAPI, BackgroundTasks, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
@@ -21,20 +21,25 @@ from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import aio_pika
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from pathlib import Path
 from functools import partial
 from asyncio import to_thread, sleep
 from dataclasses import dataclass
-import logging.handlers
 from ...logging_config import setup_logging
 from ...utils.rabbitmq import RabbitMQConnection, get_rabbitmq_connection, RABBIT_QUEUE
-from ...models.url_models import URLDiscoveryConfig, transform_skills_response
+from ...models.url_models import URLDiscoveryConfig
 from ...db.repository import RecruitmentDatabase
 from ...utils.url_loader import load_urls_from_directory
 from ...config import settings
+from aio_pika import Message, DeliveryMode
+from aio_pika.exceptions import ChannelClosed
+import random
 
-async def perform_scheduled_search():
-    """Perform scheduled search for recruitment URLs."""
+async def perform_scheduled_search(channel: Optional[aio_pika.Channel] = None):
+    """Perform scheduled search for recruitment URLs.
+    
+    Args:
+        channel: Optional RabbitMQ channel to use. If not provided, a new one will be created.
+    """
     try:
         # Create a default search config
         search_config = SearchConfig(
@@ -50,8 +55,18 @@ async def perform_scheduled_search():
         
         # Publish URLs to queue
         if urls:
-            channel = await get_rabbitmq_channel()
-            await publish_urls_to_queue(urls, search_config.id, channel)
+            try:
+                # Use provided channel or get a new one
+                channel_to_use = channel or await get_rabbitmq_channel()
+                await publish_urls_to_queue(urls, search_config.id, channel_to_use)
+            except Exception as e:
+                logger.error("Failed to publish URLs to queue", extra={
+                    "error": str(e),
+                    "search_id": search_config.id,
+                    "urls_count": len(urls)
+                })
+                # Don't re-raise - we want the scheduler to continue running
+                return
             
         logger.info("Completed scheduled search", extra={
             "urls_found": len(urls),
@@ -63,6 +78,7 @@ async def perform_scheduled_search():
             "error": str(e),
             "search_id": "scheduled_search"
         })
+        # Don't re-raise - we want the scheduler to continue running
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -78,21 +94,46 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = AsyncIOScheduler()
     app.state.scheduler.start()
     
-    # Schedule initial search task
+    # Schedule initial search task with the channel
     app.state.scheduler.add_job(
         perform_scheduled_search,
         'interval',
         seconds=settings.search_interval_seconds,
-        id='url_discovery_search'
+        id='url_discovery_search',
+        kwargs={"channel": app.state.rabbitmq_channel}
     )
     
-    yield
-    
-    # Cleanup
-    if hasattr(app.state, 'db'):
-        await app.state.db.close()
-    if hasattr(app.state, 'scheduler'):
-        app.state.scheduler.shutdown()
+    try:
+        yield
+    finally:
+        # Cleanup in reverse order of initialization
+        logger.info("Starting graceful shutdown...")
+        
+        # Shutdown scheduler first to stop any running jobs
+        if hasattr(app.state, 'scheduler'):
+            logger.info("Shutting down scheduler...")
+            app.state.scheduler.shutdown(wait=True)
+            logger.info("Scheduler shutdown complete")
+        
+        # Close RabbitMQ connection
+        if hasattr(app.state, 'rabbitmq_channel'):
+            logger.info("Closing RabbitMQ connection...")
+            try:
+                await app.state.rabbitmq_channel.close()
+                logger.info("RabbitMQ connection closed")
+            except Exception as e:
+                logger.error(f"Error closing RabbitMQ connection: {e}")
+        
+        # Close database connection last
+        if hasattr(app.state, 'db'):
+            logger.info("Closing database connection...")
+            try:
+                await app.state.db.close()
+                logger.info("Database connection closed")
+            except Exception as e:
+                logger.error(f"Error closing database connection: {e}")
+        
+        logger.info("Graceful shutdown complete")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -127,7 +168,7 @@ async def publish_urls_to_queue(urls: List[str], search_id: str, channel: aio_pi
                     body=json.dumps({
                         "url": url,
                         "search_id": search_id,
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     }).encode(),
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                 )
@@ -146,21 +187,80 @@ async def publish_urls_to_queue(urls: List[str], search_id: str, channel: aio_pi
         
     except Exception as e:
         logger.error(f"Error publishing to RabbitMQ queue: {e}")
-        search_results.update_status(search_id, "error", str(e))
+        await search_results.update_status(search_id, "error", str(e))
 
 async def get_rabbitmq_channel() -> aio_pika.Channel:
-    """Get or create a RabbitMQ channel."""
-    try:
-        if not hasattr(app.state, 'rabbitmq_channel') or app.state.rabbitmq_channel.is_closed:
-            if hasattr(app.state, 'rabbitmq_channel'):
-                await app.state.rabbitmq_channel.close()  # tidy leak
-            app.state.rabbitmq_channel = await get_rabbitmq_connection()
-            # Declare queue once per channel lifecycle
-            await app.state.rabbitmq_channel.declare_queue(RABBIT_QUEUE, durable=True)
-        return app.state.rabbitmq_channel
-    except Exception as e:
-        logger.error(f"Error getting RabbitMQ channel: {e}")
-        raise
+    """Get or create a RabbitMQ channel with retry logic.
+    
+    Returns:
+        aio_pika.Channel: A connected RabbitMQ channel
+        
+    Raises:
+        HTTPException: If unable to establish connection after retries
+    """
+    max_retries = settings.retry_attempts
+    retry_delay = 2  # Base delay in seconds
+    
+    for attempt in range(max_retries):
+        try:
+            if not hasattr(app.state, 'rabbitmq_channel') or app.state.rabbitmq_channel.is_closed:
+                if hasattr(app.state, 'rabbitmq_channel'):
+                    logger.warning("RabbitMQ channel leaked; reopening", extra={
+                        "attempt": attempt + 1,
+                        "max_retries": max_retries
+                    })
+                    try:
+                        await app.state.rabbitmq_channel.close()  # tidy leak
+                    except Exception as e:
+                        logger.warning(f"Error closing leaked channel: {e}")
+                
+                logger.info("Establishing new RabbitMQ connection", extra={
+                    "attempt": attempt + 1,
+                    "max_retries": max_retries
+                })
+                app.state.rabbitmq_channel = await get_rabbitmq_connection()
+                
+                # Declare queue once per channel lifecycle
+                try:
+                    await app.state.rabbitmq_channel.declare_queue(
+                        RABBIT_QUEUE,
+                        durable=True,
+                        arguments={
+                            'x-message-ttl': 86400000,  # 24 hours in milliseconds
+                            'x-max-length': 100000,     # Maximum queue size
+                            'x-overflow': 'reject-publish'  # Reject new messages when full
+                        }
+                    )
+                    logger.info("Successfully declared RabbitMQ queue")
+                except Exception as e:
+                    logger.error(f"Error declaring queue: {e}")
+                    raise
+            
+            return app.state.rabbitmq_channel
+            
+        except Exception as e:
+            logger.error(f"RabbitMQ connection attempt {attempt + 1} failed", extra={
+                "error": str(e),
+                "attempt": attempt + 1,
+                "max_retries": max_retries
+            })
+            
+            if attempt == max_retries - 1:  # Last attempt
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Failed to establish RabbitMQ connection after {max_retries} attempts: {str(e)}"
+                )
+            
+            # Exponential backoff with jitter
+            delay = retry_delay * (2 ** attempt) + (random.random() * 0.1)
+            logger.info(f"Retrying in {delay:.2f} seconds...")
+            await asyncio.sleep(delay)
+    
+    # This should never be reached due to the raise in the loop
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Failed to establish RabbitMQ connection"
+    )
 
 # Helper functions
 async def get_db() -> RecruitmentDatabase:
@@ -173,13 +273,15 @@ async def get_db() -> RecruitmentDatabase:
     return app.state.db
 
 async def get_rabbitmq() -> aio_pika.Channel:
-    """Get RabbitMQ channel."""
-    if not hasattr(app.state, 'rabbitmq_channel'):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="RabbitMQ not initialized"
-        )
-    return app.state.rabbitmq_channel
+    """Get RabbitMQ channel.
+    
+    Returns:
+        aio_pika.Channel: A connected RabbitMQ channel
+        
+    Raises:
+        HTTPException: If unable to establish connection
+    """
+    return await get_rabbitmq_channel()
 
 async def get_scheduler() -> AsyncIOScheduler:
     """Get scheduler instance."""
@@ -203,12 +305,13 @@ class JSONFormatter(logging.Formatter):
     """JSON formatter for structured logging."""
     def format(self, record):
         log_record = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "message": record.getMessage(),
             "module": record.module,
             "function": record.funcName,
-            "line": record.lineno
+            "line": record.lineno,
+            "service": "url_discovery"  # Add service context
         }
         if hasattr(record, "extra"):
             log_record.update(record.extra)
@@ -216,22 +319,23 @@ class JSONFormatter(logging.Formatter):
 
 # Create module-specific logger with JSON formatting
 logger = setup_logging(__name__)
+logger.propagate = False  # Prevent double emission if other libs attach handlers
+
 # Replace the formatter on the existing handler instead of adding a new one
 for h in logger.handlers:
     h.setFormatter(JSONFormatter())
 
-# Get the absolute path to the project root
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-DEFAULT_DB_PATH = str(PROJECT_ROOT / "databases" / "recruitment.db")
+# Ensure child loggers inherit JSON formatting
+logging.root.handlers[:] = logger.handlers
 
 # Pydantic models for API
 class SearchConfig(BaseModel):
     id: str
     days_back: int = Field(default=settings.search_days_back)
-    excluded_domains: List[str] = Field(default=[])
-    academic_suffixes: List[str] = Field(default=[])
+    excluded_domains: List[str] = Field(default_factory=list)
+    academic_suffixes: List[str] = Field(default_factory=list)
     recruitment_terms: List[str] = Field(
-        default=[
+        default_factory=lambda: [
             "site:careers24.com job",
             "site:pnet.co.za job",
             "site:indeed.co.za job",
@@ -244,11 +348,14 @@ class SearchConfig(BaseModel):
             "site:joburg.co.za hiring"
         ]
     )
-    locations: List[str] = Field(default=["South Africa"])
+    locations: List[str] = Field(default_factory=lambda: ["South Africa"])
     batch_size: int = Field(default=settings.google_search_batch_size)
     search_interval_seconds: int = Field(default=settings.search_interval_seconds)
 
-    @validator("recruitment_terms", "locations", "excluded_domains", "academic_suffixes")
+    @field_validator(
+        "recruitment_terms", "locations", "excluded_domains", "academic_suffixes",
+        mode="before"
+    )
     def split_env_strings(cls, v):
         if isinstance(v, str):
             return [x.strip() for x in v.split(",")]
@@ -282,15 +389,20 @@ class SearchResultsCache:
         self._results: Dict[str, SearchResult] = {}
         self._lock = asyncio.Lock()
     
-    async def add(self, search_id: str, urls: List[str] = None) -> None:
-        """Add a new search result."""
+    async def add(self, search_id: str, urls: Optional[List[str]] = None) -> None:
+        """Add a new search result.
+        
+        Args:
+            search_id: Unique identifier for the search
+            urls: Optional list of URLs found in the search
+        """
         async with self._lock:
             self._results[search_id] = SearchResult(
                 search_id=search_id,
                 status="pending",
                 urls_found=len(urls) if urls else 0,
                 urls=urls or [],
-                timestamp=datetime.now().isoformat()
+                timestamp=datetime.now(timezone.utc).isoformat()
             )
             logger.info("Added new search result", extra={
                 "search_id": search_id,
@@ -309,6 +421,13 @@ class SearchResultsCache:
                     "status": status,
                     "error": error
                 })
+    
+    async def update_urls(self, search_id: str, urls: List[str]) -> None:
+        """Update the urls and urls_found for a search result."""
+        async with self._lock:
+            if search_id in self._results:
+                self._results[search_id].urls = urls
+                self._results[search_id].urls_found = len(urls)
     
     async def get(self, search_id: str) -> Optional[SearchResult]:
         """Get a search result by ID."""
@@ -405,18 +524,22 @@ class RecruitmentAdSearch:
             max_results: Maximum number of URLs to return
             
         Returns:
-            List of valid URLs found in CSV files
+            List[str]: List of valid URLs found in CSV files. Returns empty list on error.
+            
+        Note:
+            Returns an empty list on error to maintain type safety and allow graceful
+            error handling. This is intentional to avoid propagating errors up the call stack.
         """
         try:
             return load_urls_from_directory(
-                directory="/app/csvs",
+                directory=settings.csv_dir,
                 url_validator=self.is_valid_recruitment_site,
                 max_results=max_results or settings.csv_read_batch_size,
                 file_pattern="*.csv"
             )
         except Exception as e:
             logger.error(f"Error reading URLs from CSV: {e}")
-            return []
+            return []  # Return empty list on error
 
     async def fetch_ads_with_retry(self, query: str, max_results: int = None, max_retries: int = 3) -> List[str]:
         """Fetch recruitment ads via live Google Search.
@@ -461,7 +584,7 @@ class RecruitmentAdSearch:
         Returns:
             Tuple of (start_date, end_date) in YYYY-MM-DD format
         """
-        end_date = datetime.now()
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=self.days_back)
         return (
             start_date.strftime("%Y-%m-%d"),
@@ -520,21 +643,18 @@ class RecruitmentAdSearch:
 async def perform_search(
     search_config: SearchConfig,
     background_tasks: BackgroundTasks,
-    db: DB,
     rabbitmq: RabbitMQ
 ) -> SearchResponse:
     """Perform a search for recruitment URLs."""
     try:
-        search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        search_id = f"{search_config.id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         
         await search_results.add(search_id)
         
         searcher = RecruitmentAdSearch(search_config)
         urls = await searcher.get_recent_ads()
         
-        async with search_results._lock:
-            search_results._results[search_id].urls = urls
-            search_results._results[search_id].urls_found = len(urls)
+        await search_results.update_urls(search_id, urls)
         await search_results.update_status(search_id, "completed")
         
         # Create response first
@@ -542,7 +662,7 @@ async def perform_search(
             search_id=search_id,
             urls_found=len(urls),
             urls=urls,
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.now(timezone.utc).isoformat()
         )
         
         # Then add the background task
@@ -559,22 +679,17 @@ async def perform_search(
 async def create_search(
     search_config: SearchConfig,
     background_tasks: BackgroundTasks,
-    db: DB,
     rabbitmq: RabbitMQ
 ) -> SearchResponse:
     """Create a new search for recruitment URLs."""
     return await perform_search(
         search_config=search_config,
         background_tasks=background_tasks,
-        db=db,
         rabbitmq=rabbitmq
     )
 
 @app.get("/search/{search_id}", response_model=SearchStatus)
-async def get_search_status(
-    search_id: str,
-    db: DB
-) -> SearchStatus:
+async def get_search_status(search_id: str) -> SearchStatus:
     """Get the status of a search."""
     result = await search_results.get(search_id)
     if not result:
@@ -588,10 +703,7 @@ async def get_search_status(
     )
 
 @app.get("/search/{search_id}/urls", response_model=List[str])
-async def get_search_urls(
-    search_id: str,
-    db: DB
-) -> List[str]:
+async def get_search_urls(search_id: str) -> List[str]:
     """Get the URLs found by a search."""
     result = await search_results.get(search_id)
     if not result:
@@ -601,22 +713,73 @@ async def get_search_urls(
 
 @app.get("/health")
 async def health_check(
+    rabbitmq: RabbitMQ,
     db: DB,
-    rabbitmq: RabbitMQ
+    scheduler: Scheduler
 ) -> Dict[str, Any]:
-    """Health check endpoint for Docker healthcheck."""
+    """Health check endpoint for Docker healthcheck.
+    
+    Checks:
+    - RabbitMQ connection and queue
+    - Database connection
+    - Scheduler status
+    
+    Returns:
+        Dict[str, Any]: Health check response with the following structure:
+            {
+                "status": str,  # "healthy" or "unhealthy"
+                "components": {  # Status of each component
+                    "rabbitmq": str,    # "connected", "connection_closed", or "queue_not_found"
+                    "database": str,    # "connected" or "error: <message>"
+                    "scheduler": str    # "running" or "not_running"
+                },
+                "error": str,  # Optional error message if status is "unhealthy"
+            }
+    """
+    health_status = {
+        "status": "healthy",
+        "components": {}
+    }
+    
     try:
-        # Check database connection
-        if not db.check_connection():
-            return {"status": "unhealthy", "error": "Database connection failed"}
-            
         # Check RabbitMQ connection
         if rabbitmq.is_closed:
-            return {"status": "unhealthy", "error": "RabbitMQ connection closed"}
+            health_status["status"] = "unhealthy"
+            health_status["components"]["rabbitmq"] = "connection_closed"
+            return health_status
+        
+        # Perform passive queue declaration to verify broker responsiveness
+        try:
+            await rabbitmq.declare_queue(RABBIT_QUEUE, passive=True)
+            health_status["components"]["rabbitmq"] = "connected"
+        except ChannelClosed:
+            health_status["status"] = "unhealthy"
+            health_status["components"]["rabbitmq"] = "queue_not_found"
+            return health_status
             
-        return {"status": "healthy", "rabbitmq": "connected"}
+        # Check database connection
+        try:
+            await db.ping()
+            health_status["components"]["database"] = "connected"
+        except Exception as e:
+            health_status["status"] = "unhealthy"
+            health_status["components"]["database"] = f"error: {str(e)}"
+            return health_status
+            
+        # Check scheduler
+        if not scheduler.running:
+            health_status["status"] = "unhealthy"
+            health_status["components"]["scheduler"] = "not_running"
+            return health_status
+        health_status["components"]["scheduler"] = "running"
+            
+        return health_status
     except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "components": health_status.get("components", {})
+        }
 
 class URLDiscoveryService:
     def __init__(self, config: URLDiscoveryConfig, rabbitmq: RabbitMQConnection):
@@ -635,10 +798,25 @@ class URLDiscoveryService:
         return await searcher.get_recent_ads()
 
     async def publish_urls(self, urls: List[str]) -> None:
-        """Publish URLs to RabbitMQ queue."""
-        for url in urls:
-            await self.rabbitmq.publish_url(url)
-        self.logger.info(f"Published {len(urls)} URLs to queue")
+        """Publish URLs to RabbitMQ queue.
+        
+        Args:
+            urls: List of URLs to publish
+            
+        Raises:
+            Exception: If publishing fails
+        """
+        if not urls:
+            self.logger.info("No URLs to publish")
+            return
+            
+        try:
+            channel = await get_rabbitmq_channel()
+            await publish_urls_to_queue(urls, "discovery_service", channel)
+            self.logger.info(f"Published {len(urls)} URLs to queue")
+        except Exception as e:
+            self.logger.error(f"Failed to publish URLs: {e}")
+            raise
 
 if __name__ == "__main__":
     import uvicorn
