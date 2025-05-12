@@ -67,15 +67,24 @@ DEFAULT_DB_PATH = str(PROJECT_ROOT / "databases" / "recruitment.db")
 
 class Settings(BaseSettings):
     """Application settings."""
+    # --- RabbitMQ ---
     rabbitmq_host: str = Field(default="localhost", env="RABBITMQ_HOST")
     rabbitmq_port: int = Field(default=5672, env="RABBITMQ_PORT")
     rabbitmq_user: str = Field(default="guest", env="RABBITMQ_USER")
     rabbitmq_password: str = Field(default="guest", env="RABBITMQ_PASSWORD")
     rabbitmq_vhost: str = Field(default="/", env="RABBITMQ_VHOST")
+    
+    # --- Database ---
     recruitment_db_url: str = Field(default=DEFAULT_DB_PATH, env="RECRUITMENT_DB_URL")
+    
+    # --- Search Configuration ---
     search_days_back: int = Field(default=7, env="SEARCH_DAYS_BACK")
-    batch_size: int = Field(default=50, env="BATCH_SIZE")
-    search_interval_minutes: int = Field(default=30, env="SEARCH_INTERVAL_MINUTES")
+    search_interval_seconds: int = Field(default=1800, env="SEARCH_INTERVAL_SECONDS")  # 30 minutes
+    
+    # --- Batch Sizes ---
+    google_search_batch_size: int = Field(default=50, env="GOOGLE_SEARCH_BATCH_SIZE")
+    publish_batch_size: int = Field(default=50, env="PUBLISH_BATCH_SIZE")
+    csv_read_batch_size: int = Field(default=200, env="CSV_READ_BATCH_SIZE")
 
     class Config:
         env_file = ".env"
@@ -105,8 +114,8 @@ class SearchConfig(BaseModel):
         ]
     )
     locations: List[str] = Field(default=["South Africa"])
-    batch_size: int = Field(default=settings.batch_size)
-    search_interval_minutes: int = Field(default=settings.search_interval_minutes)
+    batch_size: int = Field(default=settings.google_search_batch_size)
+    search_interval_seconds: int = Field(default=settings.search_interval_seconds)
 
     @validator("recruitment_terms", "locations", "excluded_domains", "academic_suffixes")
     def split_env_strings(cls, v):
@@ -260,7 +269,7 @@ class RecruitmentAdSearch:
             logger.error("Domain validation error", extra={"url": url, "error": str(e)})
             return False
 
-    def read_urls_from_csv(self, max_results: int = 200) -> List[str]:
+    def read_urls_from_csv(self, max_results: int = None) -> List[str]:
         """Read URLs from CSV files in the data directory.
         
         Args:
@@ -273,14 +282,14 @@ class RecruitmentAdSearch:
             return load_urls_from_directory(
                 directory="/app/csvs",
                 url_validator=self.is_valid_recruitment_site,
-                max_results=max_results,
+                max_results=max_results or settings.csv_read_batch_size,
                 file_pattern="*.csv"
             )
         except Exception as e:
             logger.error(f"Error reading URLs from CSV: {e}")
             return []
 
-    async def fetch_ads_with_retry(self, query: str, max_results: int = 5, max_retries: int = 3) -> List[str]:
+    async def fetch_ads_with_retry(self, query: str, max_results: int = None, max_retries: int = 3) -> List[str]:
         """Fetch recruitment ads via live Google Search.
         
         Args:
@@ -290,12 +299,10 @@ class RecruitmentAdSearch:
             
         Returns:
             List of valid URLs found in the search
-            
-        Note:
-            Uses exponential backoff for retries and runs the blocking
-            Google search in a separate thread to avoid blocking the event loop.
         """
         articles: list[str] = []
+        max_results = max_results or settings.google_search_batch_size
+        
         for attempt in range(max_retries):
             try:
                 results = await to_thread(
@@ -403,23 +410,31 @@ async def publish_urls_to_queue(urls: List[str], search_id: str, channel: aio_pi
         
         logger.info(f"Starting to publish {len(urls)} URLs to RabbitMQ queue")
         
-        for i, url in enumerate(urls, 1):
-            message = aio_pika.Message(
-                body=json.dumps({
-                    "url": url,
-                    "search_id": search_id,
-                    "timestamp": datetime.now().isoformat()
-                }).encode(),
-                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-            )
+        # Process URLs in batches
+        for i in range(0, len(urls), settings.publish_batch_size):
+            batch = urls[i:i + settings.publish_batch_size]
+            messages = []
             
-            await channel.default_exchange.publish(
-                message,
-                routing_key=RABBIT_QUEUE
-            )
+            # Prepare batch of messages
+            for url in batch:
+                message = aio_pika.Message(
+                    body=json.dumps({
+                        "url": url,
+                        "search_id": search_id,
+                        "timestamp": datetime.now().isoformat()
+                    }).encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                )
+                messages.append(message)
             
-            if i % 10 == 0:  # Log progress every 10 URLs
-                logger.info(f"Published {i}/{len(urls)} URLs to queue")
+            # Publish batch
+            for message in messages:
+                await channel.default_exchange.publish(
+                    message,
+                    routing_key=RABBIT_QUEUE
+                )
+            
+            logger.info(f"Published batch {i//settings.publish_batch_size + 1} of {(len(urls) + settings.publish_batch_size - 1)//settings.publish_batch_size}")
                 
         logger.info(f"Successfully published all {len(urls)} URLs to RabbitMQ queue")
         
@@ -529,13 +544,13 @@ async def lifespan(app: FastAPI):
     search_config = SearchConfig(
         id="initial_search",
         days_back=settings.search_days_back,
-        batch_size=settings.batch_size,
-        search_interval_minutes=settings.search_interval_minutes
+        batch_size=settings.google_search_batch_size,
+        search_interval_seconds=settings.search_interval_seconds
     )
     scheduler.add_job(
         perform_scheduled_search,
         'interval',
-        minutes=search_config.search_interval_minutes,
+        seconds=settings.search_interval_seconds,
         args=[search_config],
         id="recruitment_search"
     )
@@ -673,7 +688,7 @@ class URLDiscoveryService:
             id="discovery_service",
             days_back=7,
             batch_size=self.config.max_results,
-            search_interval_minutes=self.config.interval_minutes
+            search_interval_seconds=self.config.interval_seconds
         ))
         return await searcher.get_recent_ads()
 
