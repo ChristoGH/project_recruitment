@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any, Tuple
 import json
 from datetime import datetime
 import logging
+import asyncio
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -215,6 +216,13 @@ class RecruitmentDatabase:
     def initialize(self) -> None:
         """Alias for init_db to maintain compatibility."""
         self.init_db()
+    
+    async def ainit(self) -> "RecruitmentDatabase":
+        """Async initializer - returns self when DB is ready."""
+        loop = asyncio.get_running_loop()
+        # Run the blocking init_db in a thread pool
+        await loop.run_in_executor(None, self.init_db)
+        return self
     
     def insert_url(self, url: str, domain: str, source: str) -> int:
         """Insert a URL into the database."""
@@ -483,6 +491,12 @@ class RecruitmentDatabase:
                 return True
         except Exception:
             return False
+    
+    async def close(self) -> None:
+        """Close any open database connections."""
+        # SQLite connections are automatically closed when they go out of scope
+        # This method is provided for API consistency with other database drivers
+        pass
     
     def link_job_location(self, job_id: int, location_id: int) -> None:
         """Link a job to a location."""

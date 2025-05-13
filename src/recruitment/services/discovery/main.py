@@ -84,8 +84,7 @@ async def perform_scheduled_search(channel: Optional[aio_pika.Channel] = None):
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI app."""
     # Initialize database
-    app.state.db = RecruitmentDatabase()
-    await app.state.db.initialize()
+    app.state.db = await RecruitmentDatabase().ainit()
     
     # Initialize RabbitMQ connection
     app.state.rabbitmq_channel = await get_rabbitmq_connection()
@@ -199,7 +198,7 @@ async def get_rabbitmq_channel() -> aio_pika.Channel:
         HTTPException: If unable to establish connection after retries
     """
     max_retries = settings.retry_attempts
-    retry_delay = 2  # Base delay in seconds
+    retry_delay = settings.request_timeout  # Use configured timeout as base delay
     
     for attempt in range(max_retries):
         try:
@@ -541,7 +540,7 @@ class RecruitmentAdSearch:
             logger.error(f"Error reading URLs from CSV: {e}")
             return []  # Return empty list on error
 
-    async def fetch_ads_with_retry(self, query: str, max_results: int = None, max_retries: int = 3) -> List[str]:
+    async def fetch_ads_with_retry(self, query: str, max_results: int = None, max_retries: int = None) -> List[str]:
         """Fetch recruitment ads via live Google Search.
         
         Args:
@@ -554,12 +553,13 @@ class RecruitmentAdSearch:
         """
         articles: list[str] = []
         max_results = max_results or settings.google_search_batch_size
+        max_retries = max_retries or settings.retry_attempts
         
         for attempt in range(max_retries):
             try:
                 results = await to_thread(
-                    partial(search, query, lang="en", num=10, start=0,
-                            stop=max_results, pause=2)
+                    partial(search, query, lang="en", num_results=max_results, start=0,
+                            stop=max_results, pause=settings.request_timeout)
                 )
                 for url in results:
                     if self.is_valid_recruitment_site(url):
