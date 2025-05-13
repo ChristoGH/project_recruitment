@@ -25,7 +25,7 @@ import aio_pika
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from recruitment.logging_config import setup_logging
-from recruitment.rabbitmq_utils import get_channel, RABBIT_QUEUE
+from src.recruitment.utils.rabbitmq import get_rabbitmq_connection, RABBIT_QUEUE
 # recruitment/services/discovery/url_discovery_service.py
 from pathlib import Path
 import pandas as pd
@@ -77,7 +77,7 @@ search_results: Dict[str, Dict] = {}
 def urls_from_csv() -> list[str]:
     """
     Temporary helper: return the unique, non-blank URLs contained in the
-    CSV’s `url` column.
+    CSV's `url` column.
     """
     df = pd.read_csv(CSV_FILE, usecols=["url"])
     return df["url"].dropna().unique().tolist()
@@ -195,9 +195,10 @@ class RecruitmentAdSearch:
 async def publish_urls_to_queue(urls: List[str], search_id: str):
     """Publish URLs to RabbitMQ queue."""
     try:
-        ch = await get_channel()
+        connection = await get_rabbitmq_connection()
+        channel = await connection.channel()
         for url in urls:
-            await ch.default_exchange.publish(
+            await channel.default_exchange.publish(
                 aio_pika.Message(
                     body=json.dumps({
                         "url": url,
@@ -226,12 +227,10 @@ async def perform_search(search_config: SearchConfig, background_tasks: Backgrou
         }
         
         searcher = RecruitmentAdSearch(search_config)
-        # urls = searcher.get_recent_ads()
-        urls = urls_from_csv()
+        urls = searcher.get_recent_ads()
         
         search_results[search_id]["urls"] = urls
         search_results[search_id]["urls_found"] = len(urls)
-
  
         background_tasks.add_task(publish_urls_to_queue, urls, search_id)
         
@@ -260,9 +259,7 @@ async def perform_scheduled_search(search_config: SearchConfig):
         }
         
         searcher = RecruitmentAdSearch(search_config)
-        # urls = searcher.get_recent_ads()
-        urls = urls_from_csv()          # temporary
-
+        urls = searcher.get_recent_ads()
         
         # Limit URLs to batch size
         urls = urls[:search_config.batch_size]
@@ -283,11 +280,12 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI application."""
     # Initialize RabbitMQ connection
     try:
-        ch = await get_channel()
-        await ch.declare_queue(RABBIT_QUEUE, durable=True)
+        connection = await get_rabbitmq_connection()
+        channel = await connection.channel()
+        await channel.declare_queue(RABBIT_QUEUE, durable=True)
         logger.info("RabbitMQ queue declared successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize RabbitMQ: {e}")
+        logger.error(f"Failed to initialize RabbitMQ: {str(e)}")
         raise
 
     # Initialize scheduler
@@ -315,8 +313,8 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     scheduler.shutdown()
-    if not ch.is_closed:
-        await ch.close()
+    if not connection.is_closed:
+        await connection.close()
 
 app = FastAPI(
     title="URL Discovery Service",
@@ -363,8 +361,8 @@ async def get_search_urls(search_id: str):
 async def health_check():
     """Health check endpoint for Docker healthcheck."""
     try:
-        ch = await get_channel()
-        if ch and not ch.is_closed:
+        connection = await get_rabbitmq_connection()
+        if connection and not connection.is_closed:
             return {"status": "healthy", "rabbitmq": "connected"}
         return {"status": "unhealthy", "rabbitmq": "disconnected"}
     except Exception as e:

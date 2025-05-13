@@ -82,7 +82,7 @@ class URLDiscoverer:
             db_path: Path to the database file
             max_workers: Maximum number of concurrent workers
         """
-        self.db = RecruitmentDatabase(db_path)
+        self.db = RecruitmentDatabase(db_path)  # Default: writable mode
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.discovery_queue = Queue()
         self.discovery_tasks: List[Task] = []
@@ -201,8 +201,12 @@ class URLDiscoverer:
             )
             
             # Store URLs in database
-            urls = [(url, url.split('/')[2], search_id) for url in results]
-            await self.db.batch_insert_urls(urls)
+            try:
+                urls = [(url, url.split('/')[2], search_id) for url in results]
+                await self.db.batch_insert_urls(urls)
+            except DatabaseError as e:
+                logger.error("DB write failed: %s", e)
+                raise
             
             # Publish URLs to RabbitMQ
             for url in results:

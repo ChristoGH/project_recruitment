@@ -43,8 +43,13 @@ class RecruitmentDatabase:
     _bootstrap_lock: asyncio.Lock | None = None  # protects first‑time bootstrap
     _bootstrapped: set[str] = set()             # db paths already initialised
     
-    def __init__(self, db_path: Optional[str] = None):
-        """Initialize database connection."""
+    def __init__(self, db_path: Optional[str] = None, *, readonly: bool = False):
+        """Initialize database connection.
+        
+        Args:
+            db_path: Path to the database file
+            readonly: If True, database is opened in read-only mode
+        """
         if db_path is None:
             # Get database path from environment variable
             db_path = os.getenv("RECRUITMENT_DB_PATH")
@@ -60,14 +65,14 @@ class RecruitmentDatabase:
         self._connection_pool = []
         self._pool_lock = asyncio.Lock()
         self._executor = ThreadPoolExecutor(max_workers=MAX_CONNECTIONS)
-        self._query_only = False
+        self._readonly = readonly
         
         # Ensure the database directory exists (only if directory part is non-empty)
         db_dirname = os.path.dirname(self.db_path)
         if db_dirname:
             os.makedirs(db_dirname, exist_ok=True)
         
-        logger.info(f"Database handle created for: {self.db_path}")
+        logger.info(f"Database handle created for: {self.db_path} (readonly={readonly})")
         
         self._ensure_core_tables_sync()
         self._bootstrapped.add(self.db_path)  # Mark as bootstrapped immediately
@@ -158,7 +163,7 @@ class RecruitmentDatabase:
             await conn.execute("PRAGMA synchronous = NORMAL")  # Faster writes
             await conn.execute("PRAGMA cache_size = -2000")  # Use 2MB of cache
             
-            if self._query_only:
+            if self._readonly:
                 await conn.execute("PRAGMA query_only = 1")
                 
             return conn
@@ -408,23 +413,63 @@ class RecruitmentDatabase:
             logger.error(f"Failed to initialize database: {str(e)}")
             raise DatabaseError(f"Failed to initialize database: {str(e)}")
 
-    async def batch_insert_urls(self, urls: List[Tuple[str, str, str]]) -> List[int]:
-        """
-        Insert multiple URLs in a single transaction.
+    def _write_guard(self, op: str) -> None:
+        """Guard against write operations in read-only mode.
         
-        NOTE: This method is disabled in read-only mode. Only the discovery service
-        should perform writes to the database.
+        Args:
+            op: Name of the operation being attempted
+            
+        Raises:
+            DatabaseError: If database is in read-only mode
         """
-        raise DatabaseError("Writes are disabled in read‑only mode")
+        if self._readonly:
+            raise DatabaseError(f"{op} is disabled in read‑only mode")
+
+    async def batch_insert_urls(self, urls: List[Tuple[str, str, str]]) -> List[int]:
+        """Insert multiple URLs in a single transaction.
+        
+        Args:
+            urls: List of (url, domain, source) tuples to insert
+            
+        Returns:
+            List[int]: List of inserted row IDs
+            
+        Raises:
+            DatabaseError: If database is in read-only mode
+        """
+        self._write_guard("batch_insert_urls")
+        conn = await self._get_connection()
+        try:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    "INSERT OR IGNORE INTO urls (url, domain, source) VALUES (?, ?, ?)",
+                    urls,
+                )
+            await conn.commit()
+            return []  # rowids not needed for now
+        finally:
+            await self._release_connection(conn)
 
     async def batch_update_url_status(self, updates: List[Tuple[int, str, Optional[str]]]) -> None:
-        """
-        Update multiple URL statuses in a single transaction.
+        """Update multiple URL statuses in a single transaction.
         
-        NOTE: This method is disabled in read-only mode. Only the discovery service
-        should perform writes to the database.
+        Args:
+            updates: List of (url_id, status, error_message) tuples
+            
+        Raises:
+            DatabaseError: If database is in read-only mode
         """
-        raise DatabaseError("Writes are disabled in read‑only mode")
+        self._write_guard("batch_update_url_status")
+        conn = await self._get_connection()
+        try:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    "UPDATE urls SET status=?, error_message=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    updates,
+                )
+            await conn.commit()
+        finally:
+            await self._release_connection(conn)
 
     async def get_unprocessed_urls(self, batch_size: int = BATCH_SIZE) -> List[Dict[str, Any]]:
         """Get unprocessed URLs with optimized query.

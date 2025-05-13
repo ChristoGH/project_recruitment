@@ -79,7 +79,7 @@ class URLProcessor:
             db_path: Path to the database file
             max_workers: Maximum number of concurrent workers
         """
-        self.db = RecruitmentDatabase(db_path)
+        self.db = RecruitmentDatabase(db_path)  # Removed readonly=True
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.processing_queue = Queue()
         self.processing_tasks: List[Task] = []
