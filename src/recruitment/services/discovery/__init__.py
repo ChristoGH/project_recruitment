@@ -2,6 +2,6 @@
 URL Discovery Service package.
 """
 
-from .main import URLDiscoveryService
+from .main import URLDiscoverer
 
-__all__ = ["URLDiscoveryService"] 
+__all__ = ["URLDiscoverer"] 

@@ -10,205 +10,228 @@ import json
 import logging
 import asyncio
 from datetime import datetime
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import aio_pika
-import sqlite3
 from pathlib import Path
+from typing import Optional, Dict, Any, List
+import psutil
+from asyncio import Queue, Task
+from concurrent.futures import ThreadPoolExecutor
 
-from ...logging_config import setup_logging
+from ...logging_config import setup_logging, get_metrics_logger
 from ...utils.rabbitmq import get_rabbitmq_connection, RABBIT_QUEUE
 from ...utils.web_crawler_wrapper import crawl_website
+from ...db.repository import RecruitmentDatabase, DatabaseError, DatabaseLockError, DatabaseConnectionError
 
 # Load environment variables
 load_dotenv()
 
-# Create module-specific logger
+# Create module-specific logger and metrics logger
 logger = setup_logging(__name__)
+metrics_logger = get_metrics_logger(__name__)
 
-# Get the absolute path to the project root
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-DB_PATH = os.getenv("RECRUITMENT_PATH", "/app/src/recruitment/db/recruitment.db")
+# Service configuration
+MAX_RETRIES = 3
+RETRY_DELAY = 1  # seconds
+MESSAGE_PROCESSING_TIMEOUT = 300  # 5 minutes
+BATCH_SIZE = 10  # Number of URLs to process in parallel
+MAX_WORKERS = 5  # Maximum number of concurrent workers
+
+# Get database path from environment variable
+project_root = Path(__file__).resolve().parent.parent.parent
+DB_PATH = os.getenv("RECRUITMENT_DB_PATH", str(project_root / "src" / "recruitment" / "db" / "recruitment.db"))
 
 # Ensure database directory exists
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-logger.info(f"Database path: {DB_PATH}")
-logger.info(f"Database directory exists: {os.path.exists(os.path.dirname(DB_PATH))}")
-logger.info(f"Database file exists: {os.path.exists(DB_PATH)}")
+try:
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+except OSError as e:
+    logger.warning(f"Could not create database directory: {e}. Using in-memory database.")
+    DB_PATH = ":memory:"
 
-def init_db():
-    """Initialize the database with required tables."""
-    logger.info(f"Initializing database at: {DB_PATH}")
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # Drop existing tables to start fresh
-    cursor.execute("DROP TABLE IF EXISTS raw_content")
-    cursor.execute("DROP TABLE IF EXISTS urls")
-    
-    # Create urls table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS urls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url TEXT UNIQUE NOT NULL,
-            source TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    # Create raw_content table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS raw_content (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (url_id) REFERENCES urls(id)
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
-    logger.info("Database initialized with fresh schema")
+logger.info("Database configuration", extra={
+    "db_path": DB_PATH,
+    "db_dir_exists": os.path.exists(os.path.dirname(DB_PATH)) if DB_PATH != ":memory:" else True,
+    "db_file_exists": os.path.exists(DB_PATH) if DB_PATH != ":memory:" else True
+})
 
-def verify_db_state():
-    """Verify the database state and log the results."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        # Check urls table
-        cursor.execute("SELECT COUNT(*) FROM urls")
-        url_count = cursor.fetchone()[0]
-        logger.info(f"Number of URLs in database: {url_count}")
-        
-        # Check raw_content table
-        cursor.execute("SELECT COUNT(*) FROM raw_content")
-        content_count = cursor.fetchone()[0]
-        logger.info(f"Number of content entries in database: {content_count}")
-        
-        # Check for any orphaned content
-        cursor.execute("""
-            SELECT COUNT(*) FROM raw_content rc
-            LEFT JOIN urls u ON rc.url_id = u.id
-            WHERE u.id IS NULL
-        """)
-        orphaned_count = cursor.fetchone()[0]
-        if orphaned_count > 0:
-            logger.warning(f"Found {orphaned_count} orphaned content entries")
-        
-        conn.close()
-        logger.info("Database state verification completed")
-    except Exception as e:
-        logger.error(f"Error verifying database state: {str(e)}")
+class ProcessingError(Exception):
+    """Base exception for processing errors."""
+    pass
 
-async def store_url_content(url: str, search_id: str):
-    """Store URL and its content in the database."""
-    try:
-        logger.info(f"Starting to process URL: {url}")
+class CrawlerError(ProcessingError):
+    """Exception raised when web crawler fails."""
+    pass
+
+class MessageProcessingError(ProcessingError):
+    """Exception raised when message processing fails."""
+    pass
+
+class URLProcessor:
+    """Handles URL processing with connection pooling and batch operations."""
+    
+    def __init__(self, db_path: str, max_workers: int = MAX_WORKERS):
+        """Initialize the URL processor.
         
-        # Run the web crawler
-        logger.info(f"Starting web crawl for URL: {url}")
-        result = await crawl_website(url)
-        logger.info(f"Web crawl completed for URL: {url}, success: {result.success}")
+        Args:
+            db_path: Path to the database file
+            max_workers: Maximum number of concurrent workers
+        """
+        self.db = RecruitmentDatabase(db_path)
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.processing_queue = Queue()
+        self.processing_tasks: List[Task] = []
+    
+    async def start(self):
+        """Start the URL processor."""
+        # Initialize database
+        await self.db.ainit()
         
-        # Store in database
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        # Start worker tasks
+        for _ in range(MAX_WORKERS):
+            task = asyncio.create_task(self._process_urls())
+            self.processing_tasks.append(task)
+        
+        logger.info("URL processor started", extra={
+            "max_workers": MAX_WORKERS,
+            "batch_size": BATCH_SIZE
+        })
+    
+    async def stop(self):
+        """Stop the URL processor."""
+        # Cancel all processing tasks
+        for task in self.processing_tasks:
+            task.cancel()
+        
+        # Wait for tasks to complete
+        await asyncio.gather(*self.processing_tasks, return_exceptions=True)
+        
+        # Close database connection
+        await self.db.close()
+        
+        logger.info("URL processor stopped")
+    
+    async def _process_urls(self):
+        """Process URLs from the queue."""
+        while True:
+            try:
+                # Get batch of URLs to process
+                urls_to_process = []
+                for _ in range(BATCH_SIZE):
+                    try:
+                        url_data = await asyncio.wait_for(
+                            self.processing_queue.get(),
+                            timeout=1.0
+                        )
+                        urls_to_process.append(url_data)
+                    except asyncio.TimeoutError:
+                        break
+                
+                if not urls_to_process:
+                    continue
+                
+                # Process URLs in parallel
+                tasks = []
+                for url_data in urls_to_process:
+                    task = asyncio.create_task(
+                        self._process_single_url(url_data)
+                    )
+                    tasks.append(task)
+                
+                # Wait for all tasks to complete
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Handle results
+                for url_data, result in zip(urls_to_process, results):
+                    if isinstance(result, Exception):
+                        logger.error("URL processing failed", extra={
+                            "url": url_data["url"],
+                            "error": str(result)
+                        })
+                    else:
+                        logger.info("URL processing completed", extra={
+                            "url": url_data["url"]
+                        })
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Error in URL processor", extra={
+                    "error": str(e)
+                })
+                await asyncio.sleep(RETRY_DELAY)
+    
+    async def _process_single_url(self, url_data: Dict[str, Any]) -> None:
+        """Process a single URL.
+        
+        Args:
+            url_data: Dictionary containing URL information
+        """
+        url = url_data["url"]
+        search_id = url_data["search_id"]
         
         try:
-            # First, store the URL in the urls table
-            logger.info(f"Inserting URL into urls table: {url}")
-            cursor.execute("""
-                INSERT OR IGNORE INTO urls (url, source, created_at)
-                VALUES (?, ?, ?)
-            """, (
+            # Run the web crawler
+            result = await crawl_website(url)
+            if not result.success:
+                raise CrawlerError(f"Web crawler failed: {result.error}")
+            
+            # Store in database
+            await self.db.batch_insert_urls([(
                 url,
-                search_id,  # Using search_id as source
-                datetime.now().isoformat()
-            ))
-            conn.commit()
-            logger.info(f"URL inserted into urls table: {url}")
+                url.split('/')[2],  # Extract domain
+                search_id
+            )])
             
-            # Get the url_id
-            cursor.execute("SELECT id FROM urls WHERE url = ?", (url,))
-            url_id = cursor.fetchone()
-            if not url_id:
-                raise Exception(f"Failed to get url_id for URL: {url}")
-            url_id = url_id[0]
-            logger.info(f"Retrieved url_id: {url_id} for URL: {url}")
+            logger.info("URL processed successfully", extra={
+                "url": url,
+                "search_id": search_id
+            })
             
-            # Store the content
-            logger.info(f"Inserting content into raw_content table for url_id: {url_id}")
-            cursor.execute("""
-                INSERT INTO raw_content (url_id, content, created_at)
-                VALUES (?, ?, ?)
-            """, (
-                url_id,
-                result.markdown if result.success else "Failed to crawl",
-                datetime.now().isoformat()
-            ))
-            conn.commit()
-            logger.info(f"Content stored successfully for url_id: {url_id}")
-            
-        except sqlite3.Error as db_error:
-            logger.error(f"Database error while storing URL {url}: {str(db_error)}")
+        except Exception as e:
+            logger.error("URL processing failed", extra={
+                "url": url,
+                "error": str(e)
+            })
             raise
-        finally:
-            conn.close()
-            logger.info(f"Database connection closed for URL: {url}")
-        
-        logger.info(f"Successfully completed processing for URL: {url}")
-        
-    except Exception as e:
-        logger.error(f"Error storing URL {url}: {str(e)}")
-        # Store error state
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            
-            logger.info(f"Storing error state for URL: {url}")
-            
-            # First, store the URL in the urls table
-            cursor.execute("""
-                INSERT OR IGNORE INTO urls (url, source, created_at)
-                VALUES (?, ?, ?)
-            """, (
-                url,
-                search_id,  # Using search_id as source
-                datetime.now().isoformat()
-            ))
-            conn.commit()
-            
-            # Get the url_id
-            cursor.execute("SELECT id FROM urls WHERE url = ?", (url,))
-            url_id = cursor.fetchone()
-            if not url_id:
-                raise Exception(f"Failed to get url_id for URL: {url}")
-            url_id = url_id[0]
-            
-            # Store the error state
-            cursor.execute("""
-                INSERT INTO raw_content (url_id, content, created_at)
-                VALUES (?, ?, ?)
-            """, (
-                url_id,
-                f"Error: {str(e)}",
-                datetime.now().isoformat()
-            ))
-            conn.commit()
-            logger.info(f"Error state stored successfully for url_id: {url_id}")
-            
-        except Exception as db_error:
-            logger.error(f"Failed to store error state for URL {url}: {str(db_error)}")
-        finally:
-            if 'conn' in locals():
-                conn.close()
-                logger.info(f"Database connection closed for error state of URL: {url}")
 
-async def consume_urls():
+async def process_message(message: aio_pika.IncomingMessage, processor: URLProcessor) -> None:
+    """Process a single message with timeout."""
+    start_time = datetime.now()
+    
+    try:
+        async with message.process():
+            data = json.loads(message.body.decode())
+            logger.info("Processing message", extra={
+                "url": data['url'],
+                "search_id": data['search_id']
+            })
+            
+            # Add to processing queue
+            await processor.processing_queue.put(data)
+            
+            processing_time = (datetime.now() - start_time).total_seconds()
+            logger.info("Message queued for processing", extra={
+                "url": data['url'],
+                "processing_time": processing_time
+            })
+                
+    except json.JSONDecodeError as e:
+        logger.error("Failed to decode message", extra={
+            "error": str(e)
+        })
+    except KeyError as e:
+        logger.error("Missing required field", extra={
+            "error": str(e)
+        })
+    except Exception as e:
+        logger.error("Error processing message", extra={
+            "error": str(e)
+        })
+
+async def consume_urls(processor: URLProcessor):
     """Consume URLs from RabbitMQ queue and store their content."""
     while True:
         try:
@@ -228,61 +251,58 @@ async def consume_urls():
                 # Declare the queue
                 queue = await channel.declare_queue(RABBIT_QUEUE, durable=True)
                 
-                logger.info("Starting to consume URLs from queue")
+                logger.info("Starting URL consumer", extra={
+                    "queue": RABBIT_QUEUE,
+                    "host": os.getenv("RABBITMQ_HOST", "rabbitmq")
+                })
                 
                 # Start consuming
                 async with queue.iterator() as queue_iter:
                     async for message in queue_iter:
-                        try:
-                            async with message.process():
-                                data = json.loads(message.body.decode())
-                                logger.info(f"Received message for URL: {data['url']}")
-                                await store_url_content(data["url"], data["search_id"])
-                                logger.info(f"Successfully processed URL: {data['url']}")
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to decode message: {str(e)}")
-                            continue
-                        except KeyError as e:
-                            logger.error(f"Missing required field in message: {str(e)}")
-                            continue
-                        except Exception as e:
-                            logger.error(f"Error processing message: {str(e)}")
-                            continue
+                        await process_message(message, processor)
+                        
+                        # Log metrics periodically
+                        metrics_logger.log_system_metrics()
+                        metrics_logger.log_process_metrics()
                                 
         except aio_pika.exceptions.ConnectionClosed:
-            logger.warning("RabbitMQ connection closed, attempting to reconnect...")
+            logger.warning("RabbitMQ connection closed", extra={
+                "host": os.getenv("RABBITMQ_HOST", "rabbitmq")
+            })
             await asyncio.sleep(5)  # Wait before reconnecting
             continue
             
         except Exception as e:
-            logger.error(f"Unexpected error in consumer: {str(e)}")
+            logger.error("Unexpected error in consumer", extra={
+                "error": str(e)
+            })
             await asyncio.sleep(5)  # Wait before retrying
             continue
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI application."""
-    init_db()
-    verify_db_state()
+    logger.info("Starting service")
     
-    connection = await get_rabbitmq_connection()
-    channel = await connection.channel()
-    await channel.declare_queue(RABBIT_QUEUE, durable=True)
+    # Initialize URL processor
+    processor = URLProcessor(DB_PATH)
+    await processor.start()
+    app.state.processor = processor
     
     # Start consumer task
-    consumer_task = asyncio.create_task(consume_urls())
-    logger.info("URL consumer started")
+    consumer_task = asyncio.create_task(consume_urls(processor))
+    app.state.consumer_task = consumer_task
     
     yield
     
     # Cleanup
+    logger.info("Starting graceful shutdown")
     consumer_task.cancel()
     try:
         await consumer_task
     except asyncio.CancelledError:
         pass
-    if not connection.is_closed:
-        await connection.close()
+    await processor.stop()
     logger.info("Service shutdown complete")
 
 app = FastAPI(lifespan=lifespan)
@@ -296,9 +316,32 @@ app.add_middleware(
 )
 
 @app.get("/health")
-async def health_check():
+async def health_check() -> Dict[str, Any]:
     """Health check endpoint."""
-    return {"status": "healthy"}
+    try:
+        # Check database connection
+        db = RecruitmentDatabase(DB_PATH)
+        if not await db.check_connection():
+            raise HTTPException(status_code=503, detail="Database connection failed")
+        
+        # Get system metrics
+        metrics = {
+            "cpu_percent": psutil.cpu_percent(),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_usage_percent": psutil.disk_usage('/').percent
+        }
+        
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": datetime.now().isoformat(),
+            "metrics": metrics
+        }
+    except Exception as e:
+        logger.error("Health check failed", extra={
+            "error": str(e)
+        })
+        raise HTTPException(status_code=503, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

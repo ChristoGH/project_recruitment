@@ -97,3 +97,23 @@ application/casedispatcher/log/
 recruitment.db.backup_*
 recruitment.code-workspace
 data/recruitment.db
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlitebak
+src/recruitment/db/recruitment.db
+src/recruitment/db/recruitment.db-journal
+databases/
+data/
+
+# Database backups
+*.db.backup*
+*.sqlite.backup*
+recruitment.db.backup_*
+
+# Database logs
+*.db.log
+*.sqlite.log

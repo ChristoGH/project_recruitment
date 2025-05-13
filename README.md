@@ -382,3 +382,180 @@ When running the services locally (outside of Docker), you need to set the PYTHO
 ```bash
 PYTHONPATH=$PYTHONPATH:. python3 recruitment/url_processing_service.py
 ```
+
+## Database Schema Migration
+
+### Overview
+The database schema is managed through a version-controlled migration system. All schema changes must be made through migrations to ensure consistency across environments and prevent data loss.
+
+### Migration Files
+- Location: `src/recruitment/db/migrations/`
+- Naming convention: `{version}_{description}.sql`
+- Example: `001_create_raw_content.sql`
+
+### Migration Process
+1. **Creating Migrations**
+   - All schema changes must be created as new migration files
+   - Each migration should be idempotent (can be run multiple times safely)
+   - Use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`
+   - Never use `DROP TABLE` statements in migrations
+
+2. **Applying Migrations**
+   - Migrations are automatically applied during service startup
+   - The `RecruitmentDatabase` class tracks schema versions in the `schema_version` table
+   - Migrations are applied in order based on version numbers
+   - Failed migrations are logged and the service will not start
+
+3. **Migration Safety**
+   - Database files are excluded from version control (see `.gitignore`)
+   - The processing service has read-only access to the database
+   - Only the discovery service can modify the database schema
+   - All migrations are wrapped in transactions for atomicity
+
+4. **Best Practices**
+   - Always backup the database before applying migrations
+   - Test migrations in a staging environment first
+   - Include both "up" and "down" migrations when possible
+   - Document breaking changes in migration files
+   - Keep migrations small and focused
+
+### Schema Version Management
+The current schema version is tracked in the `schema_version` table:
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Migration Responsibilities
+1. **Discovery Service**
+   - Primary responsibility for schema management
+   - Handles migration application during startup
+   - Manages schema version tracking
+   - Logs migration status and errors
+
+2. **Processing Service**
+   - Read-only access to database
+   - No schema modification capabilities
+   - Verifies schema compatibility on startup
+   - Reports schema version mismatches
+
+### Troubleshooting
+If you encounter schema-related issues:
+1. Check the service logs for migration errors
+2. Verify the schema version in the `schema_version` table
+3. Ensure all required migrations are present
+4. Check database file permissions
+5. Verify the database is not corrupted
+
+### Backup and Recovery
+- Regular database backups are recommended
+- Backup location: `./backups/`
+- Backup naming: `recruitment.db.backup_{timestamp}`
+- Recovery process:
+  1. Stop all services
+  2. Restore backup file
+  3. Verify schema version
+  4. Restart services
+
+## Database Safety Improvements
+
+During the integration testing phase, we identified and resolved several critical issues related to database safety and concurrency. Here's a summary of the improvements made:
+
+### 1. Race Condition Resolution
+
+**Problem**: Multiple database instances were causing disk I/O errors due to concurrent access during initialization.
+
+**Solution**: Implemented a lazy-initialized bootstrap lock mechanism:
+```python
+class RecruitmentDatabase:
+    _bootstrap_lock: asyncio.Lock | None = None  # protects first‑time bootstrap
+    _bootstrapped: set[str] = set()             # db paths already initialised
+```
+
+### 2. Read-Only Mode Enforcement
+
+**Problem**: Processing service needed to be strictly read-only to prevent accidental writes.
+
+**Solution**: 
+- Implemented read-only mode at the connection level
+- Added explicit error messages for write operations
+- Documented the read-only contract in method docstrings
+
+### 3. Schema Initialization
+
+**Problem**: Schema initialization was causing race conditions and potential data corruption.
+
+**Solution**:
+- Implemented synchronous core table creation
+- Added bootstrap tracking to prevent duplicate initialization
+- Separated core schema from full migrations
+
+### 4. Connection Management
+
+**Problem**: Async/sync connection handling was inconsistent and error-prone.
+
+**Solution**:
+- Made `check_connection()` properly async
+- Added proper connection pooling
+- Implemented safe connection release
+
+### 5. Future-Proofing
+
+**Problem**: Code wasn't ready for Python 3.14's stricter event loop rules.
+
+**Solution**:
+- Made bootstrap lock lazy-initialized
+- Removed global event loop dependencies
+- Added proper async context management
+
+### Key Improvements
+
+1. **Safety**:
+   - Strict read-only mode for processing service
+   - Race condition prevention
+   - Safe schema initialization
+
+2. **Performance**:
+   - Connection pooling
+   - Efficient bootstrap tracking
+   - Proper async/sync separation
+
+3. **Maintainability**:
+   - Clear documentation
+   - Explicit contracts
+   - Future-proof design
+
+### Testing
+
+All improvements are covered by integration tests in `tests/integration/test_database_safety.py`, which verify:
+- Read-only mode enforcement
+- Safe concurrent access
+- Proper schema initialization
+- Connection management
+- Error handling
+
+### Usage Notes
+
+1. **Discovery Service**:
+   - Has full write access
+   - Handles schema migrations
+   - Manages URL insertion
+
+2. **Processing Service**:
+   - Strictly read-only
+   - Uses connection pooling
+   - Safe concurrent access
+
+3. **Database Initialization**:
+   ```python
+   # Discovery Service
+   db = await RecruitmentDatabase(path).ainit()
+   
+   # Processing Service
+   db = await RecruitmentDatabase(path).ainit()
+   await db.set_query_only(True)
+   ```
+
+These improvements ensure safe, concurrent database access while maintaining clear separation of concerns between services.
