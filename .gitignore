@@ -117,3 +117,4 @@ recruitment.db.backup_*
 # Database logs
 *.db.log
 *.sqlite.log
+recruitment.db*
