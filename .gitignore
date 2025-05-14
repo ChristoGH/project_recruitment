@@ -118,3 +118,5 @@ recruitment.db.backup_*
 *.db.log
 *.sqlite.log
 recruitment.db*
+src/recruitment/db/recruitment.db-shm
+src/recruitment/db/recruitment.db-wal
