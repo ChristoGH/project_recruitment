@@ -423,6 +423,7 @@ class RecruitmentDatabase:
             DatabaseError: If database is in read-only mode
         """
         if self._readonly:
+            logger.debug("WRITE‑GUARD tripped on %s", op)
             raise DatabaseError(f"{op} is disabled in read‑only mode")
 
     async def batch_insert_urls(self, urls: List[Tuple[str, str, str]]) -> List[int]:
@@ -445,8 +446,14 @@ class RecruitmentDatabase:
                     "INSERT OR IGNORE INTO urls (url, domain, source) VALUES (?, ?, ?)",
                     urls,
                 )
-            await conn.commit()
+                rowcount = cur.rowcount
+                logger.info(f"Batch insert executed: {rowcount} rows affected")
+                await conn.commit()
+                logger.info("Transaction committed successfully")
             return []  # rowids not needed for now
+        except Exception as e:
+            logger.error(f"Error in batch_insert_urls: {str(e)}")
+            raise
         finally:
             await self._release_connection(conn)
 
