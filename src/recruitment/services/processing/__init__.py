@@ -6,4 +6,4 @@ This service processes URLs from a RabbitMQ queue and stores the results in a da
 
 from .main import app
 
-__all__ = ['app'] 
+__all__ = ["app"]

@@ -14,21 +14,22 @@ print(f"Python path: {sys.path}")
 try:
     # Try absolute import
     from recruitment.logging_config import setup_logging
+
     print("Successfully imported logging_config using absolute import")
-    
-    # Try relative import
-    from .recruitment.logging_config import setup_logging
-    print("Successfully imported logging_config using relative import")
-    
+
     # Initialize logger
     logger = setup_logging("test")
     print("Successfully initialized logger")
 except ImportError as e:
     print(f"ImportError: {e}")
-    print(f"Recruitment directory exists: {os.path.exists(os.path.join(project_root, 'recruitment'))}")
-    print(f"Logging config exists: {os.path.exists(os.path.join(project_root, 'recruitment', 'logging_config.py'))}")
-    
+    print(
+        f"Recruitment directory exists: {os.path.exists(os.path.join(project_root, 'recruitment'))}"
+    )
+    print(
+        f"Logging config exists: {os.path.exists(os.path.join(project_root, 'recruitment', 'logging_config.py'))}"
+    )
+
     # List contents of recruitment directory
     print("\nContents of recruitment directory:")
-    for item in os.listdir(os.path.join(project_root, 'recruitment')):
-        print(f"  - {item}") 
+    for item in os.listdir(os.path.join(project_root, "recruitment")):
+        print(f"  - {item}")

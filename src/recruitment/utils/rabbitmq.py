@@ -1,15 +1,14 @@
 import os
-import asyncio
 import aio_pika
-from functools import lru_cache
 import logging
-from typing import Optional, AsyncGenerator
+from typing import AsyncGenerator
 
 RABBIT_QUEUE = "recruitment_urls"
 
 logger = logging.getLogger(__name__)
 
 _connection: aio_pika.RobustConnection | None = None
+
 
 async def get_rabbitmq_connection() -> aio_pika.RobustConnection:
     global _connection
@@ -21,15 +20,19 @@ async def get_rabbitmq_connection() -> aio_pika.RobustConnection:
             password=os.getenv("RABBITMQ_PASSWORD", "guest"),
             heartbeat=60,
         )
-        logger.info(f"Successfully connected to RabbitMQ at {os.getenv('RABBITMQ_HOST', 'rabbitmq')}")
+        logger.info(
+            f"Successfully connected to RabbitMQ at {os.getenv('RABBITMQ_HOST', 'rabbitmq')}"
+        )
     return _connection
+
 
 async def get_channel() -> aio_pika.abc.AbstractChannel:
     """Get a channel from the RabbitMQ connection."""
     connection = await get_rabbitmq_connection()
     channel = await connection.channel()
     await channel.declare_queue(RABBIT_QUEUE, durable=True)
-    return channel 
+    return channel
+
 
 class RabbitMQConnection:
     def __init__(
@@ -37,7 +40,7 @@ class RabbitMQConnection:
         host: str = "localhost",
         port: int = 5672,
         user: str = "guest",
-        password: str = "guest"
+        password: str = "guest",
     ):
         self.host = host
         self.port = port
@@ -51,16 +54,10 @@ class RabbitMQConnection:
         """Connect to RabbitMQ and set up channel and queue."""
         try:
             self.connection = await aio_pika.connect_robust(
-                host=self.host,
-                port=self.port,
-                login=self.user,
-                password=self.password
+                host=self.host, port=self.port, login=self.user, password=self.password
             )
             self.channel = await self.connection.channel()
-            self.queue = await self.channel.declare_queue(
-                RABBIT_QUEUE,
-                durable=True
-            )
+            self.queue = await self.channel.declare_queue(RABBIT_QUEUE, durable=True)
             logger.info("Connected to RabbitMQ")
         except Exception as e:
             logger.error(f"Failed to connect to RabbitMQ: {e}", exc_info=True)
@@ -81,10 +78,7 @@ class RabbitMQConnection:
         if not self.is_connected():
             raise RuntimeError("Not connected to RabbitMQ")
         message = aio_pika.Message(url.encode())
-        await self.channel.default_exchange.publish(
-            message,
-            routing_key=RABBIT_QUEUE
-        )
+        await self.channel.default_exchange.publish(message, routing_key=RABBIT_QUEUE)
 
     async def consume_urls(self) -> AsyncGenerator[str, None]:
         """Consume URLs from the queue."""
@@ -94,4 +88,4 @@ class RabbitMQConnection:
             async for message in queue_iter:
                 async with message.process():
                     url = message.body.decode()
-                    yield url 
+                    yield url

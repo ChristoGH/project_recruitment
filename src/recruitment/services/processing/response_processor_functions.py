@@ -1,14 +1,13 @@
 import json
-import logging
 # Add or update this import line at the top of response_processor_functions.py
 
 from typing import Dict, List, Any, Optional, Union, Tuple
 from pydantic import BaseModel, ValidationError
 
 # Import the model mapping functionality
-from src.recruitment.utils import get_model_for_prompt
+from recruitment.utils import get_model_for_prompt
 
-from src.recruitment.logging_config import setup_logging
+from recruitment.logging_config import setup_logging
 
 # Create module-specific logger
 logger = setup_logging("response_processor_functions")
@@ -16,16 +15,19 @@ logger = setup_logging("response_processor_functions")
 
 class ResponseProcessingError(Exception):
     """Exception raised for errors during response processing."""
+
     pass
 
 
 class ValidationFailedError(ResponseProcessingError):
     """Exception raised when validation fails for a response."""
+
     pass
 
 
 class JSONDecodeError(ResponseProcessingError):
     """Exception raised when JSON decoding fails for a response."""
+
     pass
 
 
@@ -43,7 +45,9 @@ class PromptResponseProcessor:
         """
         self.db = db
 
-    def process_response(self, url_id: int, prompt_type: str, response: Union[str, Dict, BaseModel]) -> None:
+    def process_response(
+        self, url_id: int, prompt_type: str, response: Union[str, Dict, BaseModel]
+    ) -> None:
         """
         Process a response from an LLM based on the prompt type.
 
@@ -69,9 +73,11 @@ class PromptResponseProcessor:
             if prompt_type == "job_prompt":
                 job_ids = self._process_job(url_id, data)
                 if not job_ids:
-                    logger.warning(f"No valid jobs found in response for URL ID {url_id}")
+                    logger.warning(
+                        f"No valid jobs found in response for URL ID {url_id}"
+                    )
                     return
-                    
+
                 # Process other prompts for each job
                 for job_id in job_ids:
                     try:
@@ -79,15 +85,25 @@ class PromptResponseProcessor:
                         job_title = self.db.get_job_title(job_id)
                         if not job_title:
                             continue
-                            
+
                         # Process job-specific prompts
-                        for other_prompt_type in ["benefits_prompt", "skills_prompt", "duties_prompt", 
-                                                "qualifications_prompt", "attributes_prompt"]:
+                        for other_prompt_type in [
+                            "benefits_prompt",
+                            "skills_prompt",
+                            "duties_prompt",
+                            "qualifications_prompt",
+                            "attributes_prompt",
+                        ]:
                             if other_prompt_type in response:
-                                self._process_job_specific_prompt(job_id, other_prompt_type, 
-                                                               self._parse_response(response[other_prompt_type]))
+                                self._process_job_specific_prompt(
+                                    job_id,
+                                    other_prompt_type,
+                                    self._parse_response(response[other_prompt_type]),
+                                )
                     except Exception as e:
-                        logger.error(f"Error processing prompts for job ID {job_id}: {e}")
+                        logger.error(
+                            f"Error processing prompts for job ID {job_id}: {e}"
+                        )
                         continue
             else:
                 # Process non-job specific prompts
@@ -99,8 +115,12 @@ class PromptResponseProcessor:
             raise
         except Exception as e:
             # Unexpected errors - log and re-raise
-            logger.error(f"Unexpected error processing {prompt_type}: {e}", exc_info=True)
-            raise ResponseProcessingError(f"Failed to process {prompt_type}: {e}") from e
+            logger.error(
+                f"Unexpected error processing {prompt_type}: {e}", exc_info=True
+            )
+            raise ResponseProcessingError(
+                f"Failed to process {prompt_type}: {e}"
+            ) from e
 
     def _parse_response(self, response: Union[str, Dict, BaseModel]) -> Dict:
         """
@@ -126,7 +146,11 @@ class PromptResponseProcessor:
             try:
                 return json.loads(response)
             except json.decoder.JSONDecodeError as e:
-                msg = f"Failed to parse JSON response: {response[:100]}..." if len(response) > 100 else response
+                msg = (
+                    f"Failed to parse JSON response: {response[:100]}..."
+                    if len(response) > 100
+                    else response
+                )
                 logger.error(msg)
                 logger.error(f"JSON error: {e}")
                 raise JSONDecodeError(f"Invalid JSON format: {e}") from e
@@ -157,7 +181,9 @@ class PromptResponseProcessor:
             logger.error(msg)
             raise ValidationFailedError(msg) from e
 
-    def _process_validated_data(self, url_id: int, prompt_type: str, data: Dict) -> None:
+    def _process_validated_data(
+        self, url_id: int, prompt_type: str, data: Dict
+    ) -> None:
         """
         Process the validated data based on the prompt type.
 
@@ -230,7 +256,7 @@ class PromptResponseProcessor:
                     job_title=job_title,
                     company_name=company,
                     description=description,
-                    salary=salary
+                    salary=salary,
                 )
 
                 # Add location if provided
@@ -240,7 +266,7 @@ class PromptResponseProcessor:
                         country=location.get("country"),
                         province=location.get("province"),
                         city=location.get("city"),
-                        street_address=location.get("street_address")
+                        street_address=location.get("street_address"),
                     )
 
                 # Add skills and benefits
@@ -286,26 +312,27 @@ class PromptResponseProcessor:
         """Process job titles and return list of job IDs."""
         job_ids = []
         jobs = data.get("jobs", [])
-        
+
         if not jobs:
             logger.warning(f"No jobs found in response for URL ID {url_id}")
             return job_ids
-            
+
         for job_title in jobs:
             try:
-                job_id = self.db.insert_job(
-                    title=job_title,
-                    url_id=url_id
-                )
+                job_id = self.db.insert_job(title=job_title, url_id=url_id)
                 job_ids.append(job_id)
-                logger.info(f"Created job record with ID {job_id} for title '{job_title}'")
+                logger.info(
+                    f"Created job record with ID {job_id} for title '{job_title}'"
+                )
             except Exception as e:
                 logger.error(f"Failed to process job title '{job_title}': {e}")
                 continue
-                
+
         return job_ids
 
-    def _process_job_specific_prompt(self, job_id: int, prompt_type: str, data: Dict[str, Any]) -> None:
+    def _process_job_specific_prompt(
+        self, job_id: int, prompt_type: str, data: Dict[str, Any]
+    ) -> None:
         """Process a prompt response for a specific job."""
         try:
             if prompt_type == "benefits_prompt":
@@ -313,36 +340,42 @@ class PromptResponseProcessor:
                 for benefit in benefits:
                     benefit_id = self.db.insert_benefit(benefit)
                     self.db.link_job_benefit(job_id, benefit_id)
-                    
+
             elif prompt_type == "skills_prompt":
                 skills = data.get("skills", [])
                 for skill_data in skills:
                     if isinstance(skill_data, (tuple, list)):
-                        skill, experience = skill_data[0], skill_data[1] if len(skill_data) > 1 else None
+                        skill, experience = (
+                            skill_data[0],
+                            skill_data[1] if len(skill_data) > 1 else None,
+                        )
                     else:
-                        skill, experience = skill_data.get("skill"), skill_data.get("experience")
-                    
+                        skill, experience = (
+                            skill_data.get("skill"),
+                            skill_data.get("experience"),
+                        )
+
                     skill_id = self.db.insert_skill(skill)
                     self.db.link_job_skill(job_id, skill_id, experience)
-                    
+
             elif prompt_type == "duties_prompt":
                 duties = data.get("duties", [])
                 for duty in duties:
                     duty_id = self.db.insert_duty(duty)
                     self.db.link_job_duty(job_id, duty_id)
-                    
+
             elif prompt_type == "qualifications_prompt":
                 qualifications = data.get("qualifications", [])
                 for qualification in qualifications:
                     qual_id = self.db.insert_qualification(qualification)
                     self.db.link_job_qualification(job_id, qual_id)
-                    
+
             elif prompt_type == "attributes_prompt":
                 attributes = data.get("attributes", [])
                 for attribute in attributes:
                     attr_id = self.db.insert_attribute(attribute)
                     self.db.link_job_attribute(job_id, attr_id)
-                    
+
         except Exception as e:
             logger.error(f"Error processing {prompt_type} for job ID {job_id}: {e}")
             raise
@@ -355,7 +388,9 @@ class PromptResponseProcessor:
 
     # Additional utility methods for the PromptResponseProcessor class
 
-    def parse_skills_data(self, prompt_responses: Dict[str, Any]) -> List[Tuple[str, Optional[str]]]:
+    def parse_skills_data(
+        self, prompt_responses: Dict[str, Any]
+    ) -> List[Tuple[str, Optional[str]]]:
         """
         Extract and parse skills data from a dict of prompt responses.
 
@@ -407,12 +442,19 @@ class PromptResponseProcessor:
                         "country": parsed_data.get("country"),
                         "province": parsed_data.get("province"),
                         "city": parsed_data.get("city"),
-                        "street_address": parsed_data.get("street_address")
+                        "street_address": parsed_data.get("street_address"),
                     }
 
                 elif prompt_type == "jobadvert_prompt":
-                    for key in ["description", "salary", "duration", "start_date",
-                                "end_date", "posted_date", "application_deadline"]:
+                    for key in [
+                        "description",
+                        "salary",
+                        "duration",
+                        "start_date",
+                        "end_date",
+                        "posted_date",
+                        "application_deadline",
+                    ]:
                         if key in parsed_data:
                             job_data[key] = parsed_data[key]
 
@@ -424,14 +466,17 @@ class PromptResponseProcessor:
                     # Handle different formats
                     for item in self._transform_skills_data(skills_data):
                         skill, experience = item
-                        processed_skills.append({
-                            "skill": skill,
-                            "experience": experience
-                        })
+                        processed_skills.append(
+                            {"skill": skill, "experience": experience}
+                        )
 
                     job_data["skills"] = processed_skills
 
-                elif prompt_type in ["benefits_prompt", "duties_prompt", "qualifications_prompt"]:
+                elif prompt_type in [
+                    "benefits_prompt",
+                    "duties_prompt",
+                    "qualifications_prompt",
+                ]:
                     # Extract the data field name (remove "_prompt" suffix)
                     field_name = prompt_type.replace("_prompt", "")
                     data_field = parsed_data.get(field_name, [])
@@ -444,8 +489,12 @@ class PromptResponseProcessor:
 
         return job_data
 
-    def process_all_responses(self, url_id: int, prompt_responses: Dict[str, Any],
-                              use_transaction: bool = True) -> Dict[str, Any]:
+    def process_all_responses(
+        self,
+        url_id: int,
+        prompt_responses: Dict[str, Any],
+        use_transaction: bool = True,
+    ) -> Dict[str, Any]:
         """
         Process all prompt responses for a URL, with transaction support.
 
@@ -457,14 +506,11 @@ class PromptResponseProcessor:
         Returns:
             Dict with processing results
         """
-        results = {
-            "success": True,
-            "processed": 0,
-            "failed": 0,
-            "errors": []
-        }
+        results = {"success": True, "processed": 0, "failed": 0, "errors": []}
 
-        if use_transaction and hasattr(self.db, "process_prompt_responses_in_transaction"):
+        if use_transaction and hasattr(
+            self.db, "process_prompt_responses_in_transaction"
+        ):
             # Process with transaction
             try:
                 parsed_responses = {}
@@ -474,21 +520,21 @@ class PromptResponseProcessor:
                         results["processed"] += 1
                     except Exception as e:
                         results["failed"] += 1
-                        results["errors"].append({
-                            "prompt_type": prompt_type,
-                            "error": str(e)
-                        })
+                        results["errors"].append(
+                            {"prompt_type": prompt_type, "error": str(e)}
+                        )
 
                 if parsed_responses:
-                    self.db.process_prompt_responses_in_transaction(url_id, parsed_responses)
+                    self.db.process_prompt_responses_in_transaction(
+                        url_id, parsed_responses
+                    )
 
             except Exception as e:
                 logger.error(f"Transaction processing failed: {e}")
                 results["success"] = False
-                results["errors"].append({
-                    "prompt_type": "transaction",
-                    "error": str(e)
-                })
+                results["errors"].append(
+                    {"prompt_type": "transaction", "error": str(e)}
+                )
         else:
             # Process individually
             for prompt_type, response in prompt_responses.items():
@@ -497,10 +543,9 @@ class PromptResponseProcessor:
                     results["processed"] += 1
                 except Exception as e:
                     results["failed"] += 1
-                    results["errors"].append({
-                        "prompt_type": prompt_type,
-                        "error": str(e)
-                    })
+                    results["errors"].append(
+                        {"prompt_type": prompt_type, "error": str(e)}
+                    )
 
         return results
 

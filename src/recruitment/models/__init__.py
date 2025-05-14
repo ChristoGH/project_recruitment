@@ -25,7 +25,7 @@ from .url_models import (
     LinkResponse,
     EmailResponse,
     CompanyPhoneNumberResponse,
-    JobAdvertResponse
+    JobAdvertResponse,
 )
 
 __all__ = [
@@ -51,5 +51,5 @@ __all__ = [
     "LinkResponse",
     "EmailResponse",
     "CompanyPhoneNumberResponse",
-    "JobAdvertResponse"
-] 
+    "JobAdvertResponse",
+]

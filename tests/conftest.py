@@ -1,8 +1,8 @@
 """Test configuration and fixtures."""
+
 import os
 import pytest
 import asyncio
-from pathlib import Path
 
 # Test configuration
 TEST_DB_PATH = "test_recruitment.db"
@@ -10,12 +10,14 @@ TEST_BACKUP_DIR = "test_backups"
 TEST_MIGRATIONS_DIR = "src/recruitment/db/migrations"
 TEST_LOG_DIR = "test_logs"
 
+
 @pytest.fixture(scope="session")
 def event_loop():
     """Create an instance of the default event loop for each test case."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
+
 
 @pytest.fixture(scope="session")
 def test_env():
@@ -33,6 +35,7 @@ def test_env():
     if "LOG_DIR" in os.environ:
         del os.environ["LOG_DIR"]
 
+
 @pytest.fixture(scope="function")
 def test_db_path():
     """Provide test database path and clean up after tests."""
@@ -42,6 +45,7 @@ def test_db_path():
         os.remove(TEST_DB_PATH)
     if os.path.exists(f"{TEST_DB_PATH}-journal"):
         os.remove(f"{TEST_DB_PATH}-journal")
+
 
 @pytest.fixture(scope="function")
 def test_backup_dir():
@@ -53,11 +57,13 @@ def test_backup_dir():
         os.remove(os.path.join(TEST_BACKUP_DIR, file))
     os.rmdir(TEST_BACKUP_DIR)
 
+
 @pytest.fixture(scope="function")
 def test_migrations_dir():
     """Ensure test migrations directory exists."""
     os.makedirs(TEST_MIGRATIONS_DIR, exist_ok=True)
     return TEST_MIGRATIONS_DIR
+
 
 @pytest.fixture(scope="function")
 def test_log_dir():
@@ -67,4 +73,4 @@ def test_log_dir():
     # Cleanup
     for file in os.listdir(TEST_LOG_DIR):
         os.remove(os.path.join(TEST_LOG_DIR, file))
-    os.rmdir(TEST_LOG_DIR) 
+    os.rmdir(TEST_LOG_DIR)

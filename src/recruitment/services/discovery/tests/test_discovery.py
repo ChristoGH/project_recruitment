@@ -2,17 +2,20 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from src.recruitment.services.discovery.main import app
+from recruitment.services.discovery.main import app
+
 
 @pytest.fixture
 def client():
     """Create a test client."""
     return TestClient(app)
 
+
 def test_app_initialization():
     """Test that the app initializes correctly."""
     client = TestClient(app)
     assert client is not None
+
 
 def test_health_check(client):
     """Test the health check endpoint."""
@@ -20,4 +23,4 @@ def test_health_check(client):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
-    assert "rabbitmq" in data 
+    assert "rabbitmq" in data

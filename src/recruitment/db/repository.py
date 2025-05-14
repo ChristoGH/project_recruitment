@@ -1,14 +1,13 @@
 """Database operations for recruitment data."""
+
 import sqlite3
 import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 import json
-from datetime import datetime
 import logging
 import asyncio
 import time
-from contextlib import contextmanager
 import aiosqlite
 from concurrent.futures import ThreadPoolExecutor
 
@@ -25,27 +24,34 @@ LOCK_TIMEOUT = 30  # seconds
 MAX_CONNECTIONS = 5
 BATCH_SIZE = 100
 
+
 class DatabaseError(Exception):
     """Custom exception for database operations."""
+
     pass
+
 
 class DatabaseLockError(DatabaseError):
     """Exception raised when database is locked."""
+
     pass
+
 
 class DatabaseConnectionError(DatabaseError):
     """Exception raised when database connection fails."""
+
     pass
+
 
 class RecruitmentDatabase:
     """Handles database operations for recruitment data."""
-    
+
     _bootstrap_lock: asyncio.Lock | None = None  # protects first‑time bootstrap
-    _bootstrapped: set[str] = set()             # db paths already initialised
-    
+    _bootstrapped: set[str] = set()  # db paths already initialised
+
     def __init__(self, db_path: Optional[str] = None, *, readonly: bool = False):
         """Initialize database connection.
-        
+
         Args:
             db_path: Path to the database file
             readonly: If True, database is opened in read-only mode
@@ -60,20 +66,22 @@ class RecruitmentDatabase:
                 db_dir.mkdir(exist_ok=True, parents=True)
                 db_path = str(db_dir / "recruitment.db")
                 logger.warning(f"No RECRUITMENT_DB_PATH set, using default: {db_path}")
-            
+
         self.db_path = db_path
         self._connection_pool = []
         self._pool_lock = asyncio.Lock()
         self._executor = ThreadPoolExecutor(max_workers=MAX_CONNECTIONS)
         self._readonly = readonly
-        
+
         # Ensure the database directory exists (only if directory part is non-empty)
         db_dirname = os.path.dirname(self.db_path)
         if db_dirname:
             os.makedirs(db_dirname, exist_ok=True)
-        
-        logger.info(f"Database handle created for: {self.db_path} (readonly={readonly})")
-        
+
+        logger.info(
+            f"Database handle created for: {self.db_path} (readonly={readonly})"
+        )
+
         self._ensure_core_tables_sync()
         self._bootstrapped.add(self.db_path)  # Mark as bootstrapped immediately
 
@@ -150,27 +158,27 @@ class RecruitmentDatabase:
         async with self._pool_lock:
             if self._connection_pool:
                 return self._connection_pool.pop()
-            
+
             # Create new connection
             conn = await aiosqlite.connect(
-                self.db_path,
-                timeout=LOCK_TIMEOUT,
-                check_same_thread=False
+                self.db_path, timeout=LOCK_TIMEOUT, check_same_thread=False
             )
             await conn.execute("PRAGMA foreign_keys = ON")
             await conn.execute(f"PRAGMA busy_timeout = {LOCK_TIMEOUT * 1000}")
-            await conn.execute("PRAGMA journal_mode = WAL")  # Enable Write-Ahead Logging
+            await conn.execute(
+                "PRAGMA journal_mode = WAL"
+            )  # Enable Write-Ahead Logging
             await conn.execute("PRAGMA synchronous = NORMAL")  # Faster writes
             await conn.execute("PRAGMA cache_size = -2000")  # Use 2MB of cache
-            
+
             if self._readonly:
                 await conn.execute("PRAGMA query_only = 1")
-                
+
             return conn
 
     async def _release_connection(self, conn: aiosqlite.Connection) -> None:
         """Release a connection back to the pool.
-        
+
         Args:
             conn: Connection to release
         """
@@ -182,20 +190,17 @@ class RecruitmentDatabase:
 
     async def _execute_in_thread(self, func, *args, **kwargs):
         """Execute a function in a thread pool.
-        
+
         Args:
             func: Function to execute
             *args: Positional arguments
             **kwargs: Keyword arguments
-            
+
         Returns:
             Any: Result of the function
         """
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: func(*args, **kwargs)
-        )
+        return await loop.run_in_executor(self._executor, lambda: func(*args, **kwargs))
 
     async def init_db(self) -> None:
         """Initialize the database and create necessary tables."""
@@ -211,15 +216,19 @@ class RecruitmentDatabase:
                             applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
-                    
+
                     # Get current schema version
-                    await cursor.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
+                    await cursor.execute(
+                        "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
+                    )
                     result = await cursor.fetchone()
                     current_version = result[0] if result else 0
-                    
+
                     if current_version < SCHEMA_VERSION:
-                        logger.info(f"Upgrading schema from version {current_version} to {SCHEMA_VERSION}")
-                        
+                        logger.info(
+                            f"Upgrading schema from version {current_version} to {SCHEMA_VERSION}"
+                        )
+
                         # Create tables with optimized indexes
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS urls (
@@ -234,10 +243,14 @@ class RecruitmentDatabase:
                                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                             )
                         """)
-                        await cursor.execute("CREATE INDEX IF NOT EXISTS idx_urls_status ON urls(status)")
-                        await cursor.execute("CREATE INDEX IF NOT EXISTS idx_urls_domain ON urls(domain)")
+                        await cursor.execute(
+                            "CREATE INDEX IF NOT EXISTS idx_urls_status ON urls(status)"
+                        )
+                        await cursor.execute(
+                            "CREATE INDEX IF NOT EXISTS idx_urls_domain ON urls(domain)"
+                        )
                         logger.info("Created urls table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS raw_content (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -248,7 +261,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created raw_content table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS jobs (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -266,7 +279,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created jobs table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS companies (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -276,7 +289,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created companies table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS locations (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -287,7 +300,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created locations table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS skills (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -296,7 +309,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created skills table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS job_skills (
                                 job_id INTEGER,
@@ -307,7 +320,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created job_skills table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS qualifications (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -316,7 +329,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created qualifications table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS job_qualifications (
                                 job_id INTEGER,
@@ -327,7 +340,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created job_qualifications table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS attributes (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -336,7 +349,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created attributes table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS job_attributes (
                                 job_id INTEGER,
@@ -347,7 +360,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created job_attributes table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS duties (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -356,7 +369,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created duties table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS job_duties (
                                 job_id INTEGER,
@@ -367,7 +380,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created job_duties table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS benefits (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -376,7 +389,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created benefits table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS job_benefits (
                                 job_id INTEGER,
@@ -387,7 +400,7 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created job_benefits table")
-                        
+
                         await cursor.execute("""
                             CREATE TABLE IF NOT EXISTS agencies (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -397,14 +410,19 @@ class RecruitmentDatabase:
                             )
                         """)
                         logger.info("Created agencies table")
-                        
+
                         # Update schema version
-                        await cursor.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+                        await cursor.execute(
+                            "INSERT INTO schema_version (version) VALUES (?)",
+                            (SCHEMA_VERSION,),
+                        )
                         await conn.commit()
                         logger.info(f"Schema upgraded to version {SCHEMA_VERSION}")
                     else:
-                        logger.info(f"Database schema is up to date (version {current_version})")
-                    
+                        logger.info(
+                            f"Database schema is up to date (version {current_version})"
+                        )
+
                     await conn.commit()
                     logger.info("Database initialization completed successfully")
             finally:
@@ -415,10 +433,10 @@ class RecruitmentDatabase:
 
     def _write_guard(self, op: str) -> None:
         """Guard against write operations in read-only mode.
-        
+
         Args:
             op: Name of the operation being attempted
-            
+
         Raises:
             DatabaseError: If database is in read-only mode
         """
@@ -428,13 +446,13 @@ class RecruitmentDatabase:
 
     async def batch_insert_urls(self, urls: List[Tuple[str, str, str]]) -> List[int]:
         """Insert multiple URLs in a single transaction.
-        
+
         Args:
             urls: List of (url, domain, source) tuples to insert
-            
+
         Returns:
             List[int]: List of inserted row IDs
-            
+
         Raises:
             DatabaseError: If database is in read-only mode
         """
@@ -457,12 +475,14 @@ class RecruitmentDatabase:
         finally:
             await self._release_connection(conn)
 
-    async def batch_update_url_status(self, updates: List[Tuple[int, str, Optional[str]]]) -> None:
+    async def batch_update_url_status(
+        self, updates: List[Tuple[int, str, Optional[str]]]
+    ) -> None:
         """Update multiple URL statuses in a single transaction.
-        
+
         Args:
             updates: List of (url_id, status, error_message) tuples
-            
+
         Raises:
             DatabaseError: If database is in read-only mode
         """
@@ -478,33 +498,33 @@ class RecruitmentDatabase:
         finally:
             await self._release_connection(conn)
 
-    async def get_unprocessed_urls(self, batch_size: int = BATCH_SIZE) -> List[Dict[str, Any]]:
+    async def get_unprocessed_urls(
+        self, batch_size: int = BATCH_SIZE
+    ) -> List[Dict[str, Any]]:
         """Get unprocessed URLs with optimized query.
-        
+
         Args:
             batch_size: Number of URLs to fetch
-            
+
         Returns:
             List[Dict[str, Any]]: List of unprocessed URLs
         """
         conn = await self._get_connection()
         try:
             async with conn.cursor() as cursor:
-                await cursor.execute("""
+                await cursor.execute(
+                    """
                     SELECT id, url, domain, source 
                     FROM urls 
                     WHERE status = 'pending' 
                     ORDER BY created_at ASC 
                     LIMIT ?
-                """, (batch_size,))
+                """,
+                    (batch_size,),
+                )
                 rows = await cursor.fetchall()
                 return [
-                    {
-                        "id": row[0],
-                        "url": row[1],
-                        "domain": row[2],
-                        "source": row[3]
-                    }
+                    {"id": row[0], "url": row[1], "domain": row[2], "source": row[3]}
                     for row in rows
                 ]
         finally:
@@ -526,7 +546,7 @@ class RecruitmentDatabase:
                     cursor = conn.cursor()
                     cursor.execute(
                         "INSERT INTO urls (url, domain, source) VALUES (?, ?, ?)",
-                        (url, domain, source)
+                        (url, domain, source),
                     )
                     conn.commit()
                     return cursor.lastrowid
@@ -540,11 +560,17 @@ class RecruitmentDatabase:
                 raise DatabaseError(f"Failed to insert URL: {str(e)}")
             except Exception as e:
                 if attempt == MAX_RETRIES - 1:
-                    raise DatabaseError(f"Failed to insert URL after {MAX_RETRIES} attempts: {str(e)}")
-                logger.warning(f"Error inserting URL, attempt {attempt + 1}/{MAX_RETRIES}: {str(e)}")
+                    raise DatabaseError(
+                        f"Failed to insert URL after {MAX_RETRIES} attempts: {str(e)}"
+                    )
+                logger.warning(
+                    f"Error inserting URL, attempt {attempt + 1}/{MAX_RETRIES}: {str(e)}"
+                )
                 time.sleep(RETRY_DELAY * (attempt + 1))
-    
-    def update_url_processing_status(self, url_id: int, status: str, error_message: Optional[str] = None) -> None:
+
+    def update_url_processing_status(
+        self, url_id: int, status: str, error_message: Optional[str] = None
+    ) -> None:
         """Update the processing status of a URL with retry logic."""
         for attempt in range(MAX_RETRIES):
             try:
@@ -553,35 +579,56 @@ class RecruitmentDatabase:
                     if error_message:
                         cursor.execute(
                             "UPDATE urls SET status = ?, error_message = ?, error_count = error_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                            (status, error_message, url_id)
+                            (status, error_message, url_id),
                         )
                     else:
                         cursor.execute(
                             "UPDATE urls SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                            (status, url_id)
+                            (status, url_id),
                         )
                     conn.commit()
                     return
             except Exception as e:
                 if attempt == MAX_RETRIES - 1:
-                    raise DatabaseError(f"Failed to update URL status after {MAX_RETRIES} attempts: {str(e)}")
-                logger.warning(f"Error updating URL status, attempt {attempt + 1}/{MAX_RETRIES}: {str(e)}")
+                    raise DatabaseError(
+                        f"Failed to update URL status after {MAX_RETRIES} attempts: {str(e)}"
+                    )
+                logger.warning(
+                    f"Error updating URL status, attempt {attempt + 1}/{MAX_RETRIES}: {str(e)}"
+                )
                 time.sleep(RETRY_DELAY * (attempt + 1))
-    
-    def insert_job(self, title: str, description: str, posted_date: str, job_type: str, url_id: int, company_id: int, location_id: int) -> int:
+
+    def insert_job(
+        self,
+        title: str,
+        description: str,
+        posted_date: str,
+        job_type: str,
+        url_id: int,
+        company_id: int,
+        location_id: int,
+    ) -> int:
         """Insert a job into the database."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO jobs (title, description, posted_date, job_type, url_id, company_id, location_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (title, description, posted_date, job_type, url_id, company_id, location_id)
+                    (
+                        title,
+                        description,
+                        posted_date,
+                        job_type,
+                        url_id,
+                        company_id,
+                        location_id,
+                    ),
                 )
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
             raise DatabaseError(f"Failed to insert job: {str(e)}")
-    
+
     def insert_company(self, name: str, website: Optional[str] = None) -> int:
         """Insert a company into the database."""
         try:
@@ -589,13 +636,13 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO companies (name, website) VALUES (?, ?)",
-                    (name, website)
+                    (name, website),
                 )
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
             raise DatabaseError(f"Failed to insert company: {str(e)}")
-    
+
     def insert_location(self, city: str, state: str, country: str) -> int:
         """Insert a location into the database."""
         try:
@@ -603,27 +650,26 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO locations (city, state, country) VALUES (?, ?, ?)",
-                    (city, state, country)
+                    (city, state, country),
                 )
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
             raise DatabaseError(f"Failed to insert location: {str(e)}")
-    
+
     def insert_skill(self, name: str) -> int:
         """Insert a skill into the database."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT OR IGNORE INTO skills (name) VALUES (?)",
-                    (name,)
+                    "INSERT OR IGNORE INTO skills (name) VALUES (?)", (name,)
                 )
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
             raise DatabaseError(f"Failed to insert skill: {str(e)}")
-    
+
     def link_job_skill(self, job_id: int, skill_id: int) -> None:
         """Link a job to a skill."""
         try:
@@ -631,26 +677,25 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR IGNORE INTO job_skills (job_id, skill_id) VALUES (?, ?)",
-                    (job_id, skill_id)
+                    (job_id, skill_id),
                 )
                 conn.commit()
         except Exception as e:
             raise DatabaseError(f"Failed to link job to skill: {str(e)}")
-    
+
     def insert_qualification(self, name: str) -> int:
         """Insert a qualification into the database."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT OR IGNORE INTO qualifications (name) VALUES (?)",
-                    (name,)
+                    "INSERT OR IGNORE INTO qualifications (name) VALUES (?)", (name,)
                 )
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
             raise DatabaseError(f"Failed to insert qualification: {str(e)}")
-    
+
     def link_job_qualification(self, job_id: int, qualification_id: int) -> None:
         """Link a job to a qualification."""
         try:
@@ -658,26 +703,25 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR IGNORE INTO job_qualifications (job_id, qualification_id) VALUES (?, ?)",
-                    (job_id, qualification_id)
+                    (job_id, qualification_id),
                 )
                 conn.commit()
         except Exception as e:
             raise DatabaseError(f"Failed to link job to qualification: {str(e)}")
-    
+
     def insert_attribute(self, name: str) -> int:
         """Insert an attribute into the database."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT OR IGNORE INTO attributes (name) VALUES (?)",
-                    (name,)
+                    "INSERT OR IGNORE INTO attributes (name) VALUES (?)", (name,)
                 )
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
             raise DatabaseError(f"Failed to insert attribute: {str(e)}")
-    
+
     def link_job_attribute(self, job_id: int, attribute_id: int) -> None:
         """Link a job to an attribute."""
         try:
@@ -685,12 +729,12 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR IGNORE INTO job_attributes (job_id, attribute_id) VALUES (?, ?)",
-                    (job_id, attribute_id)
+                    (job_id, attribute_id),
                 )
                 conn.commit()
         except Exception as e:
             raise DatabaseError(f"Failed to link job to attribute: {str(e)}")
-    
+
     def insert_duty(self, description: str) -> int:
         """Insert a duty into the database."""
         try:
@@ -698,13 +742,13 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR IGNORE INTO duties (description) VALUES (?)",
-                    (description,)
+                    (description,),
                 )
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
             raise DatabaseError(f"Failed to insert duty: {str(e)}")
-    
+
     def link_job_duty(self, job_id: int, duty_id: int) -> None:
         """Link a job to a duty."""
         try:
@@ -712,12 +756,12 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR IGNORE INTO job_duties (job_id, duty_id) VALUES (?, ?)",
-                    (job_id, duty_id)
+                    (job_id, duty_id),
                 )
                 conn.commit()
         except Exception as e:
             raise DatabaseError(f"Failed to link job to duty: {str(e)}")
-    
+
     def insert_benefit(self, description: str) -> int:
         """Insert a benefit into the database."""
         try:
@@ -725,13 +769,13 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR IGNORE INTO benefits (description) VALUES (?)",
-                    (description,)
+                    (description,),
                 )
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
             raise DatabaseError(f"Failed to insert benefit: {str(e)}")
-    
+
     def link_job_benefit(self, job_id: int, benefit_id: int) -> None:
         """Link a job to a benefit."""
         try:
@@ -739,12 +783,12 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR IGNORE INTO job_benefits (job_id, benefit_id) VALUES (?, ?)",
-                    (job_id, benefit_id)
+                    (job_id, benefit_id),
                 )
                 conn.commit()
         except Exception as e:
             raise DatabaseError(f"Failed to link job to benefit: {str(e)}")
-    
+
     def insert_agency(self, name: str, website: Optional[str] = None) -> int:
         """Insert an agency into the database."""
         try:
@@ -752,14 +796,16 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO agencies (name, website) VALUES (?, ?)",
-                    (name, website)
+                    (name, website),
                 )
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
             raise DatabaseError(f"Failed to insert agency: {str(e)}")
-    
-    def save_processed_url(self, url: str, content: str, transformed: Dict[str, Any], timestamp: str) -> None:
+
+    def save_processed_url(
+        self, url: str, content: str, transformed: Dict[str, Any], timestamp: str
+    ) -> None:
         """Save processed URL data to the database with retry logic."""
         for attempt in range(MAX_RETRIES):
             try:
@@ -767,16 +813,27 @@ class RecruitmentDatabase:
                     cursor = conn.cursor()
                     cursor.execute(
                         "INSERT OR REPLACE INTO processed_content (url, content, skills, confidence, source, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-                        (url, content, json.dumps(transformed.get("skills", [])), transformed.get("confidence", 0.0), transformed.get("source", ""), timestamp)
+                        (
+                            url,
+                            content,
+                            json.dumps(transformed.get("skills", [])),
+                            transformed.get("confidence", 0.0),
+                            transformed.get("source", ""),
+                            timestamp,
+                        ),
                     )
                     conn.commit()
                     return
             except Exception as e:
                 if attempt == MAX_RETRIES - 1:
-                    raise DatabaseError(f"Failed to save processed URL after {MAX_RETRIES} attempts: {str(e)}")
-                logger.warning(f"Error saving processed URL, attempt {attempt + 1}/{MAX_RETRIES}: {str(e)}")
+                    raise DatabaseError(
+                        f"Failed to save processed URL after {MAX_RETRIES} attempts: {str(e)}"
+                    )
+                logger.warning(
+                    f"Error saving processed URL, attempt {attempt + 1}/{MAX_RETRIES}: {str(e)}"
+                )
                 time.sleep(RETRY_DELAY * (attempt + 1))
-    
+
     def link_job_location(self, job_id: int, location_id: int) -> None:
         """Link a job to a location."""
         try:
@@ -784,8 +841,8 @@ class RecruitmentDatabase:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE jobs SET location_id = ? WHERE id = ?",
-                    (location_id, job_id)
+                    (location_id, job_id),
                 )
                 conn.commit()
         except Exception as e:
-            raise DatabaseError(f"Failed to link job to location: {str(e)}") 
+            raise DatabaseError(f"Failed to link job to location: {str(e)}")

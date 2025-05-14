@@ -1,6 +1,4 @@
 import asyncio
-from datetime import datetime
-from uuid import uuid4
 import requests
 from bs4 import BeautifulSoup
 import logging
@@ -10,10 +8,11 @@ from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 async def get_recruitment_urls(keywords: List[str], locations: List[str]) -> List[str]:
     """Get a list of recruitment URLs from Google search."""
     urls = []
-    
+
     for term in keywords:
         for location in locations:
             search_query = f"{term} {location}"
@@ -28,36 +27,41 @@ async def get_recruitment_urls(keywords: List[str], locations: List[str]) -> Lis
                         "Accept-Encoding": "gzip, deflate, br",
                         "Connection": "keep-alive",
                         "Upgrade-Insecure-Requests": "1",
-                        "Cache-Control": "max-age=0"
-                    }
+                        "Cache-Control": "max-age=0",
+                    },
                 )
-                
+
                 if response.status_code != 200:
-                    logger.warning(f"Non-200 response from Google: {response.status_code}")
+                    logger.warning(
+                        f"Non-200 response from Google: {response.status_code}"
+                    )
                     continue
-                    
-                soup = BeautifulSoup(response.text, 'html.parser')
+
+                soup = BeautifulSoup(response.text, "html.parser")
                 found_urls = []
-                
-                for link in soup.find_all('a'):
-                    href = link.get('href')
-                    if href and href.startswith('/url?q='):
-                        url = href.split('&')[0][7:]
+
+                for link in soup.find_all("a"):
+                    href = link.get("href")
+                    if href and href.startswith("/url?q="):
+                        url = href.split("&")[0][7:]
                         if url not in urls:
                             urls.append(url)
                             found_urls.append(url)
                             logger.debug(f"Found valid URL: {url}")
-                
-                logger.info(f"Found {len(found_urls)} new URLs for term: \"{search_query}\"")
-                
+
+                logger.info(
+                    f'Found {len(found_urls)} new URLs for term: "{search_query}"'
+                )
+
                 # Add a delay between requests to avoid rate limiting
                 await asyncio.sleep(5)
-                
+
             except Exception as e:
-                logger.error(f"Error searching for term \"{search_query}\": {str(e)}")
-    
+                logger.error(f'Error searching for term "{search_query}": {str(e)}')
+
     logger.info(f"Total unique URLs found: {len(urls)}")
     return urls
+
 
 async def test_search():
     # Create search configuration
@@ -69,25 +73,25 @@ async def test_search():
             "employment opportunity",
             "career opportunity",
             "job advertisement",
-            "recruitment drive"
+            "recruitment drive",
         ],
         "locations": ["South Africa"],
-        "max_results": 10
+        "max_results": 10,
     }
-    
+
     try:
         # Get URLs directly
         urls = await get_recruitment_urls(
-            search_config["keywords"],
-            search_config["locations"]
+            search_config["keywords"], search_config["locations"]
         )
-        
+
         print(f"Found {len(urls)} URLs:")
         for url in urls:
             print(f"- {url}")
-            
+
     except Exception as e:
         print("Error:", str(e))
 
+
 if __name__ == "__main__":
-    asyncio.run(test_search()) 
+    asyncio.run(test_search())

@@ -1,10 +1,13 @@
 """Database models for the recruitment application."""
+
 from dataclasses import dataclass
 from typing import Optional, List
+
 
 @dataclass
 class JobPosting:
     """Model representing a job posting."""
+
     title: str
     company: str
     location: str
@@ -18,4 +21,4 @@ class JobPosting:
     application_deadline: Optional[str] = None
     contact_info: Optional[str] = None
     benefits: Optional[List[str]] = None
-    remote_work: Optional[bool] = None 
+    remote_work: Optional[bool] = None

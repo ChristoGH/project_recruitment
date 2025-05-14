@@ -1,18 +1,23 @@
 """
 Test module for the RecruitmentDatabase class.
 """
+
 import os
 import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
-import asyncio
 import sys
 
 # Add the parent directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.append(
+    os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    )
+)
 
-from src.recruitment.db.repository import RecruitmentDatabase, DatabaseError
+from recruitment.db.repository import RecruitmentDatabase, DatabaseError
+
 
 @pytest.fixture
 def mock_db_connection():
@@ -23,12 +28,14 @@ def mock_db_connection():
     mock_cursor.lastrowid = 1
     return mock_conn
 
+
 @pytest.fixture
 def db(mock_db_connection):
     """Create a RecruitmentDatabase instance with a mock connection."""
-    with patch('sqlite3.connect', return_value=mock_db_connection):
-        db = RecruitmentDatabase(':memory:')
+    with patch("sqlite3.connect", return_value=mock_db_connection):
+        db = RecruitmentDatabase(":memory:")
         return db
+
 
 def test_insert_url(db, mock_db_connection):
     """Test inserting a URL into the database."""
@@ -40,6 +47,7 @@ def test_insert_url(db, mock_db_connection):
     assert url_id == 1
     mock_cursor.execute.assert_called_once()
 
+
 def test_update_url_processing_status(db, mock_db_connection):
     """Test updating the processing status of a URL."""
     mock_cursor = mock_db_connection.cursor()
@@ -48,15 +56,19 @@ def test_update_url_processing_status(db, mock_db_connection):
     db.update_url_processing_status(1, "completed")
     mock_cursor.execute.assert_called_once()
 
+
 def test_insert_job(db, mock_db_connection):
     """Test inserting a job into the database."""
     mock_cursor = mock_db_connection.cursor()
     mock_cursor.lastrowid = 1
 
     # Test inserting a job
-    job_id = db.insert_job("Software Engineer", "A great job", "2024-03-01", "Full-time", "Remote", 1)
+    job_id = db.insert_job(
+        "Software Engineer", "A great job", "2024-03-01", "Full-time", "Remote", 1
+    )
     assert job_id == 1
     mock_cursor.execute.assert_called_once()
+
 
 def test_insert_advert(db, mock_db_connection):
     """Test inserting an advert into the database."""
@@ -64,9 +76,12 @@ def test_insert_advert(db, mock_db_connection):
     mock_cursor.lastrowid = 1
 
     # Test inserting an advert
-    advert_id = db.insert_advert("Software Engineer", "A great job", "2024-03-01", "Full-time", "Remote")
+    advert_id = db.insert_advert(
+        "Software Engineer", "A great job", "2024-03-01", "Full-time", "Remote"
+    )
     assert advert_id == 1
     mock_cursor.execute.assert_called_once()
+
 
 def test_insert_skill(db, mock_db_connection):
     """Test inserting a skill into the database."""
@@ -78,6 +93,7 @@ def test_insert_skill(db, mock_db_connection):
     assert skill_id == 1
     mock_cursor.execute.assert_called_once()
 
+
 def test_link_job_skill(db, mock_db_connection):
     """Test linking a job to a skill."""
     mock_cursor = mock_db_connection.cursor()
@@ -85,6 +101,7 @@ def test_link_job_skill(db, mock_db_connection):
     # Test linking a job to a skill
     db.link_job_skill(1, 1)
     mock_cursor.execute.assert_called_once()
+
 
 def test_insert_qualification(db, mock_db_connection):
     """Test inserting a qualification into the database."""
@@ -96,6 +113,7 @@ def test_insert_qualification(db, mock_db_connection):
     assert qualification_id == 1
     mock_cursor.execute.assert_called_once()
 
+
 def test_link_job_qualification(db, mock_db_connection):
     """Test linking a job to a qualification."""
     mock_cursor = mock_db_connection.cursor()
@@ -103,6 +121,7 @@ def test_link_job_qualification(db, mock_db_connection):
     # Test linking a job to a qualification
     db.link_job_qualification(1, 1)
     mock_cursor.execute.assert_called_once()
+
 
 def test_insert_attribute(db, mock_db_connection):
     """Test inserting an attribute into the database."""
@@ -114,6 +133,7 @@ def test_insert_attribute(db, mock_db_connection):
     assert attribute_id == 1
     mock_cursor.execute.assert_called_once()
 
+
 def test_link_job_attribute(db, mock_db_connection):
     """Test linking a job to an attribute."""
     mock_cursor = mock_db_connection.cursor()
@@ -121,6 +141,7 @@ def test_link_job_attribute(db, mock_db_connection):
     # Test linking a job to an attribute
     db.link_job_attribute(1, 1)
     mock_cursor.execute.assert_called_once()
+
 
 def test_insert_duty(db, mock_db_connection):
     """Test inserting a duty into the database."""
@@ -132,6 +153,7 @@ def test_insert_duty(db, mock_db_connection):
     assert duty_id == 1
     mock_cursor.execute.assert_called_once()
 
+
 def test_link_job_duty(db, mock_db_connection):
     """Test linking a job to a duty."""
     mock_cursor = mock_db_connection.cursor()
@@ -139,6 +161,7 @@ def test_link_job_duty(db, mock_db_connection):
     # Test linking a job to a duty
     db.link_job_duty(1, 1)
     mock_cursor.execute.assert_called_once()
+
 
 def test_insert_benefit(db, mock_db_connection):
     """Test inserting a benefit into the database."""
@@ -150,6 +173,7 @@ def test_insert_benefit(db, mock_db_connection):
     assert benefit_id == 1
     mock_cursor.execute.assert_called_once()
 
+
 def test_link_job_benefit(db, mock_db_connection):
     """Test linking a job to a benefit."""
     mock_cursor = mock_db_connection.cursor()
@@ -157,6 +181,7 @@ def test_link_job_benefit(db, mock_db_connection):
     # Test linking a job to a benefit
     db.link_job_benefit(1, 1)
     mock_cursor.execute.assert_called_once()
+
 
 def test_insert_company(db, mock_db_connection):
     """Test inserting a company into the database."""
@@ -168,6 +193,7 @@ def test_insert_company(db, mock_db_connection):
     assert company_id == 1
     mock_cursor.execute.assert_called_once()
 
+
 def test_insert_agency(db, mock_db_connection):
     """Test inserting an agency into the database."""
     mock_cursor = mock_db_connection.cursor()
@@ -177,6 +203,7 @@ def test_insert_agency(db, mock_db_connection):
     agency_id = db.insert_agency("Example Agency", "http://example.com")
     assert agency_id == 1
     mock_cursor.execute.assert_called_once()
+
 
 def test_insert_location(db, mock_db_connection):
     """Test inserting a location into the database."""
@@ -188,6 +215,7 @@ def test_insert_location(db, mock_db_connection):
     assert location_id == 1
     mock_cursor.execute.assert_called_once()
 
+
 def test_link_job_location(db, mock_db_connection):
     """Test linking a job to a location."""
     mock_cursor = mock_db_connection.cursor()
@@ -196,6 +224,7 @@ def test_link_job_location(db, mock_db_connection):
     db.link_job_location(1, 1)
     mock_cursor.execute.assert_called_once()
 
+
 def test_database_error_handling(db, mock_db_connection):
     """Test that database errors are handled correctly."""
     mock_cursor = mock_db_connection.cursor()
@@ -203,4 +232,4 @@ def test_database_error_handling(db, mock_db_connection):
 
     # Test that the error is caught and re-raised as DatabaseError
     with pytest.raises(DatabaseError):
-        db.insert_url("http://example.com", "example.com", "test") 
+        db.insert_url("http://example.com", "example.com", "test")

@@ -16,9 +16,11 @@ os.environ["RABBITMQ_PORT"] = "5672"
 os.environ["RABBITMQ_USER"] = "guest"
 os.environ["RABBITMQ_PASSWORD"] = "guest"
 
+
 @pytest.fixture(scope="session")
 def test_db_path():
     return os.environ["DB_PATH"]
+
 
 @pytest.fixture(scope="session")
 def rabbitmq_config():
@@ -26,5 +28,5 @@ def rabbitmq_config():
         "host": os.environ["RABBITMQ_HOST"],
         "port": int(os.environ["RABBITMQ_PORT"]),
         "user": os.environ["RABBITMQ_USER"],
-        "password": os.environ["RABBITMQ_PASSWORD"]
-    } 
+        "password": os.environ["RABBITMQ_PASSWORD"],
+    }

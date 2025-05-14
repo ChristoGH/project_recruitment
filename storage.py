@@ -13,6 +13,7 @@ from datetime import datetime
 # Configure logging
 logger = logging.getLogger(__name__)
 
+
 class Storage:
     """A class for managing storage operations in the recruitment database."""
 
@@ -77,7 +78,7 @@ class Storage:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR IGNORE INTO urls (url, domain) VALUES (?, ?)",
-                    (url, domain)
+                    (url, domain),
                 )
                 conn.commit()
                 return cursor.rowcount > 0
@@ -100,7 +101,7 @@ class Storage:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT * FROM urls WHERE processed = FALSE ORDER BY created_at LIMIT ?",
-                    (limit,)
+                    (limit,),
                 )
                 return [dict(row) for row in cursor.fetchall()]
         except sqlite3.Error as e:
@@ -120,8 +121,7 @@ class Storage:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "UPDATE urls SET processed = TRUE WHERE id = ?",
-                    (url_id,)
+                    "UPDATE urls SET processed = TRUE WHERE id = ?", (url_id,)
                 )
                 conn.commit()
                 return cursor.rowcount > 0
@@ -129,7 +129,13 @@ class Storage:
             logger.error(f"Error marking URL as processed: {str(e)}")
             return False
 
-    def save_article(self, url_id: int, title: str, content: str, published_date: Optional[datetime] = None) -> bool:
+    def save_article(
+        self,
+        url_id: int,
+        title: str,
+        content: str,
+        published_date: Optional[datetime] = None,
+    ) -> bool:
         """Save an article to the database.
 
         Args:
@@ -149,10 +155,10 @@ class Storage:
                     INSERT INTO articles (url_id, title, content, published_date)
                     VALUES (?, ?, ?, ?)
                     """,
-                    (url_id, title, content, published_date)
+                    (url_id, title, content, published_date),
                 )
                 conn.commit()
                 return True
         except sqlite3.Error as e:
             logger.error(f"Error saving article to database: {str(e)}")
-            return False 
+            return False

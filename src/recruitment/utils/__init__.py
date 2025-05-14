@@ -4,14 +4,12 @@ from typing import Dict, Type
 from pydantic import BaseModel
 
 # Import all the necessary model classes from url_models.py
-from src.recruitment.models.url_models import (
+from recruitment.models.url_models import (
     AdvertResponse,
     JobAdvertResponse,
-    ConfirmResponse,
     JobResponse,
     LocationResponse,
     ContactPersonResponse,
-    SkillsResponse,
     SkillExperienceResponse,
     AttributesResponse,
     AgencyResponse,
@@ -41,7 +39,6 @@ PROMPT_MODEL_MAP: Dict[str, Type[BaseModel]] = {
     "location_prompt": LocationResponse,
     "jobadvert_prompt": JobAdvertResponse,
     "industry_prompt": IndustryResponse,
-
     # Add the missing mappings
     "duties_prompt": DutiesResponse,
     "qualifications_prompt": QualificationsResponse,
