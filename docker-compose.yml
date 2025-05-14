@@ -16,23 +16,14 @@ services:
     build:
       context: .
       dockerfile: docker/discovery.Dockerfile
-    command: uvicorn services.discovery.url_discovery_service:app --host 0.0.0.0 --port 8000
+    command: uvicorn src.recruitment.services.discovery.url_discovery_service:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     environment:
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - RABBITMQ_USER=guest
-      - RABBITMQ_PASSWORD=guest
-      - RABBITMQ_VHOST=/
-      - RECRUITMENT_DB_PATH=/app/src/recruitment/db/recruitment.db
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq/
       - SEARCH_DAYS_BACK=7
       - SEARCH_INTERVAL_SECONDS=1800
-      - GOOGLE_SEARCH_BATCH_SIZE=50
-      - PUBLISH_BATCH_SIZE=50
-      - MAX_CONCURRENT_REQUESTS=5
-      - REQUEST_TIMEOUT=30
-      - RETRY_ATTEMPTS=3
+      - GOOGLE_TLD=co.za
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -44,7 +35,6 @@ services:
     volumes:
       - ./src/recruitment/db:/app/src/recruitment/db
       - recruitment_logs:/app/logs
-      - ./csvs:/app/csvs:ro
     networks:
       - recruitment_network
 
@@ -56,14 +46,8 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - RABBITMQ_USER=guest
-      - RABBITMQ_PASSWORD=guest
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq/
       - RECRUITMENT_DB_PATH=/app/src/recruitment/db/recruitment.db
-      - MAX_CONCURRENT_REQUESTS=5
-      - REQUEST_TIMEOUT=30
-      - RETRY_ATTEMPTS=3
     depends_on:
       rabbitmq:
         condition: service_healthy

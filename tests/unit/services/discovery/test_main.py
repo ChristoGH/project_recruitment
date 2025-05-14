@@ -108,13 +108,13 @@ async def test_publish_urls_to_queue(mock_rabbitmq):
 
 @pytest.mark.asyncio
 async def test_perform_search(search_config, mock_rabbitmq):
-    with patch('url_discovery_service.search') as mock_search:
+    with patch('src.recruitment.services.discovery.url_discovery_service.search') as mock_search:
         mock_search.return_value = [
             "https://valid-job-site.com/job1",
             "https://valid-job-site.com/job2"
         ]
         
-        from url_discovery_service import perform_search
+        from src.recruitment.services.discovery.url_discovery_service import perform_search
         response = await perform_search(search_config, Mock())
         
         assert response.search_id.startswith("test_search_")
@@ -124,7 +124,7 @@ async def test_perform_search(search_config, mock_rabbitmq):
 
 @pytest.mark.asyncio
 async def test_get_search_status():
-    from url_discovery_service import get_search_status, search_results
+    from src.recruitment.services.discovery.url_discovery_service import get_search_status, search_results
     
     # Setup test data
     search_id = "test_search_20240101"
@@ -141,7 +141,7 @@ async def test_get_search_status():
 
 @pytest.mark.asyncio
 async def test_get_search_urls():
-    from url_discovery_service import get_search_urls, search_results
+    from src.recruitment.services.discovery.url_discovery_service import get_search_urls, search_results
     
     # Setup test data
     search_id = "test_search_20240101"
@@ -155,7 +155,7 @@ async def test_get_search_urls():
 
 @pytest.mark.asyncio
 async def test_health_check():
-    from url_discovery_service import health_check
+    from src.recruitment.services.discovery.url_discovery_service import health_check
     
     with patch('pika.BlockingConnection') as mock_conn:
         mock_conn.return_value.is_closed = False

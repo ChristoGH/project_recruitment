@@ -1,7 +1,6 @@
 import asyncio
 import requests
 from typing import List
-from recruitment.url_discovery_service import RecruitmentAdSearch, SearchConfig
 
 async def populate_queue_via_api(search_config: SearchConfig) -> None:
     """Populate queue using the FastAPI endpoint."""
