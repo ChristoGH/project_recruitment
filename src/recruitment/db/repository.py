@@ -154,27 +154,13 @@ class RecruitmentDatabase:
         return asyncio.run(self.check_connection())
 
     async def _get_connection(self) -> aiosqlite.Connection:
-        """Get a connection from the pool or create a new one."""
-        async with self._pool_lock:
-            if self._connection_pool:
-                return self._connection_pool.pop()
-
-            # Create new connection
-            conn = await aiosqlite.connect(
-                self.db_path, timeout=LOCK_TIMEOUT, check_same_thread=False
-            )
-            await conn.execute("PRAGMA foreign_keys = ON")
-            await conn.execute(f"PRAGMA busy_timeout = {LOCK_TIMEOUT * 1000}")
-            await conn.execute(
-                "PRAGMA journal_mode = WAL"
-            )  # Enable Write-Ahead Logging
-            await conn.execute("PRAGMA synchronous = NORMAL")  # Faster writes
-            await conn.execute("PRAGMA cache_size = -2000")  # Use 2MB of cache
-
-            if self._readonly:
-                await conn.execute("PRAGMA query_only = 1")
-
-            return conn
+        """Get a database connection from the pool."""
+        conn = await self._get_connection()
+        # Enable foreign key constraints
+        await conn.execute("PRAGMA foreign_keys = ON")
+        # Set busy timeout to handle concurrent access
+        await conn.execute("PRAGMA busy_timeout = 5000")
+        return conn
 
     async def _release_connection(self, conn: aiosqlite.Connection) -> None:
         """Release a connection back to the pool.

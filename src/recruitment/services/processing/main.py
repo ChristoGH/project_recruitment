@@ -20,6 +20,12 @@ import psutil
 from asyncio import Queue, Task
 from concurrent.futures import ThreadPoolExecutor
 import sqlite3
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 from ...logging_config import setup_logging, get_metrics_logger
 from ...utils.rabbitmq import RABBIT_QUEUE
@@ -41,6 +47,7 @@ RETRY_DELAY = 1  # seconds
 MESSAGE_PROCESSING_TIMEOUT = 300  # 5 minutes
 BATCH_SIZE = 10  # Number of URLs to process in parallel
 MAX_WORKERS = 5  # Maximum number of concurrent workers
+DEAD_LETTER_QUEUE = "url_dead"  # Queue for failed URLs
 
 # Get database path from environment variable
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -183,6 +190,29 @@ class URLProcessor:
                 logger.error("Error in URL processor", extra={"error": str(e)})
                 await asyncio.sleep(RETRY_DELAY)
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((CrawlerError, ConnectionError, TimeoutError)),
+        reraise=True,
+    )
+    async def _crawl_with_retry(self, url: str):
+        """Crawl a URL with retry logic.
+
+        Args:
+            url: The URL to crawl
+
+        Returns:
+            The crawl result
+
+        Raises:
+            CrawlerError: If all retries fail
+        """
+        result = await crawl_website(url)
+        if not result.success:
+            raise CrawlerError(f"Web crawler failed: {result.error}")
+        return result
+
     async def _process_single_url(self, url_data: Dict[str, Any]) -> None:
         """Process a single URL.
 
@@ -193,18 +223,21 @@ class URLProcessor:
         search_id = url_data["search_id"]
 
         try:
-            # Run the web crawler
-            result = await crawl_website(url)
-            if not result.success:
-                raise CrawlerError(f"Web crawler failed: {result.error}")
+            # Run the web crawler with retry logic
+            result = await self._crawl_with_retry(url)
 
             # First ensure URL exists and get its ID
             conn = await self.db._get_connection()
             try:
                 async with conn.cursor() as cursor:
-                    # Insert URL if not exists
+                    # Insert URL if not exists with upsert
                     await cursor.execute(
-                        "INSERT OR IGNORE INTO urls (url, domain, source) VALUES (?, ?, ?)",
+                        """
+                        INSERT INTO urls (url, domain, source, updated_at) 
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(url) DO UPDATE SET 
+                            updated_at = CURRENT_TIMESTAMP
+                        """,
                         (url, url.split("/")[2], search_id),
                     )
                     await conn.commit()
@@ -261,7 +294,54 @@ class URLProcessor:
                 "URL processing failed",
                 extra={"url": url, "error": str(e), "error_type": type(e).__name__},
             )
+            # Republish to dead-letter queue
+            await self._publish_to_dead_letter(url_data, str(e))
             raise
+
+    async def _publish_to_dead_letter(
+        self, url_data: Dict[str, Any], error: str
+    ) -> None:
+        """Publish failed URL to dead-letter queue.
+
+        Args:
+            url_data: The original URL data
+            error: The error message
+        """
+        try:
+            connection = await aio_pika.connect_robust(
+                host=os.getenv("RABBITMQ_HOST", "rabbitmq"),
+                port=int(os.getenv("RABBITMQ_PORT", 5672)),
+                login=os.getenv("RABBITMQ_USER", "guest"),
+                password=os.getenv("RABBITMQ_PASSWORD", "guest"),
+            )
+
+            async with connection:
+                channel = await connection.channel()
+                # Declare queue but don't store the result since we don't need it
+                await channel.declare_queue(DEAD_LETTER_QUEUE, durable=True)
+
+                # Add error information to the message
+                url_data["error"] = error
+                url_data["failed_at"] = datetime.now().isoformat()
+
+                message = aio_pika.Message(
+                    body=json.dumps(url_data).encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                )
+
+                await channel.default_exchange.publish(
+                    message, routing_key=DEAD_LETTER_QUEUE
+                )
+
+                logger.info(
+                    "Published to dead-letter queue",
+                    extra={"url": url_data["url"], "error": error},
+                )
+        except Exception as e:
+            logger.error(
+                "Failed to publish to dead-letter queue",
+                extra={"url": url_data["url"], "error": str(e)},
+            )
 
 
 async def process_message(
