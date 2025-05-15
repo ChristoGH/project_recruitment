@@ -126,15 +126,13 @@ async def gsearch_async(term, limit):
 
 async def publish_urls(sid, urls):
     channel = app.state.amqp_channel
-    msgs = [
-        aio_pika.Message(
-            body=json.dumps({"sid": sid, "url": u, "ts": _now()}).encode(),
+    for url in urls:
+        msg = aio_pika.Message(
+            body=json.dumps({"sid": sid, "url": url, "ts": _now()}).encode(),
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
         )
-        for u in urls
-    ]
-    await channel.default_exchange.publish_batch(msgs, routing_key="recruitment_urls")
-    logger.info("Published %d urls (sid=%s)", len(msgs), sid)
+        await channel.default_exchange.publish(msg, routing_key="recruitment_urls")
+    logger.info("Published %d urls (sid=%s)", len(urls), sid)
 
 
 def background_task_with_error_status(task_func):

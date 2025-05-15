@@ -27,6 +27,7 @@ services:
       - ENABLE_SCHEDULED_SEARCH=1
       - SCHEDULED_SEARCH_TERM='recruitment jobs South Africa'
       - SCHEDULED_SEARCH_INTERVAL_SECONDS=1800
+      - GOOGLE_SEARCH_BATCH_SIZE=100
     depends_on:
       rabbitmq:
         condition: service_healthy
