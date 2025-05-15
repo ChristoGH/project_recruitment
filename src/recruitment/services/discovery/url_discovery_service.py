@@ -111,9 +111,17 @@ app = FastAPI(
 # =============================
 async def gsearch_async(term, limit):
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        _executor, lambda: list(search(term, tld=TLD, num=10, stop=limit, pause=2))
-    )
+    try:
+        # First attempt: new approach with num_results
+        return await loop.run_in_executor(
+            _executor, lambda: list(search(term, num_results=limit))
+        )
+    except Exception as e:
+        logger.warning(f"New search method failed: {e}, trying fallback...")
+        # Fallback: original approach with tld, num, stop, pause
+        return await loop.run_in_executor(
+            _executor, lambda: list(search(term, tld=TLD, num=10, stop=limit, pause=2))
+        )
 
 
 async def publish_urls(sid, urls):

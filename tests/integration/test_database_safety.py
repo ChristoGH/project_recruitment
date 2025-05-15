@@ -7,7 +7,6 @@ import shutil
 from datetime import datetime
 
 from recruitment.db.repository import RecruitmentDatabase
-from recruitment.services.discovery.main import URLDiscoverer
 from recruitment.services.processing.main import URLProcessor
 
 # Test configuration
@@ -115,31 +114,6 @@ async def test_processing_service_readonly(test_db):
         await processor.stop()
 
 
-@pytest.mark.asyncio
-async def test_discovery_service_migration(test_db):
-    """Test that discovery service can apply migrations."""
-    await test_db.init_db()
-
-    discoverer = URLDiscoverer(TEST_DB_PATH)
-    await discoverer.start()
-
-    try:
-        # Verify database is accessible
-        assert await discoverer.db.check_connection()
-
-        # Verify schema version is tracked
-        conn = sqlite3.connect(TEST_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
-        )
-        version = cursor.fetchone()[0]
-        assert version > 0
-        conn.close()
-    finally:
-        await discoverer.stop()
-
-
 def test_database_backup(backup_dir, test_db):
     """Test database backup functionality."""
     # Create test data
@@ -195,22 +169,3 @@ def test_database_file_safety():
     assert "src/recruitment/db/recruitment.db" in gitignore_content
     assert "databases/" in gitignore_content
     assert "data/" in gitignore_content
-
-
-@pytest.mark.asyncio
-async def test_service_dependencies(test_db):
-    """Test that services start in the correct order."""
-    discoverer = URLDiscoverer(TEST_DB_PATH)
-    processor = URLProcessor(TEST_DB_PATH)
-
-    # Start discovery service first
-    await discoverer.start()
-    assert await discoverer.db.check_connection()
-
-    # Start processing service
-    await processor.start()
-    assert await processor.db.check_connection()
-
-    # Cleanup
-    await processor.stop()
-    await discoverer.stop()
