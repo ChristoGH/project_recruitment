@@ -120,3 +120,59 @@ recruitment.db.backup_*
 recruitment.db*
 src/recruitment/db/recruitment.db-shm
 src/recruitment/db/recruitment.db-wal
+src/recruitment/db/recruitment.db-wal
+src/recruitment/db/recruitment.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# Test coverage
+.coverage
+htmlcov/
+
+# Misc
+.DS_Store
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
