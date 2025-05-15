@@ -22,12 +22,12 @@ services:
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq/
       - SEARCH_DAYS_BACK=7
-      - SEARCH_INTERVAL_SECONDS=1800
       - GOOGLE_TLD=co.za
       - ENABLE_SCHEDULED_SEARCH=1
       - SCHEDULED_SEARCH_TERM='recruitment jobs South Africa'
-      - SCHEDULED_SEARCH_INTERVAL_SECONDS=1800
-      - GOOGLE_SEARCH_BATCH_SIZE=100
+      - SCHEDULED_SEARCH_INTERVAL_SECONDS=300
+      - GOOGLE_SEARCH_BATCH_SIZE=5
+      - LOG_LEVEL=DEBUG
     depends_on:
       rabbitmq:
         condition: service_healthy

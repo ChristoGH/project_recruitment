@@ -19,6 +19,7 @@ from typing import Dict, Any, List
 import psutil
 from asyncio import Queue, Task
 from concurrent.futures import ThreadPoolExecutor
+import sqlite3
 
 from ...logging_config import setup_logging, get_metrics_logger
 from ...utils.rabbitmq import RABBIT_QUEUE
@@ -77,6 +78,12 @@ class ProcessingError(Exception):
 
 class CrawlerError(ProcessingError):
     """Exception raised when web crawler fails."""
+
+    pass
+
+
+class DatabaseError(ProcessingError):
+    """Exception raised when database operations fail."""
 
     pass
 
@@ -191,23 +198,69 @@ class URLProcessor:
             if not result.success:
                 raise CrawlerError(f"Web crawler failed: {result.error}")
 
-            # Store in database
-            await self.db.batch_insert_urls(
-                [
-                    (
-                        url,
-                        url.split("/")[2],  # Extract domain
-                        search_id,
+            # First ensure URL exists and get its ID
+            conn = await self.db._get_connection()
+            try:
+                async with conn.cursor() as cursor:
+                    # Insert URL if not exists
+                    await cursor.execute(
+                        "INSERT OR IGNORE INTO urls (url, domain, source) VALUES (?, ?, ?)",
+                        (url, url.split("/")[2], search_id),
                     )
-                ]
-            )
+                    await conn.commit()
+                    logger.info("URL inserted/updated", extra={"url": url})
+
+                    # Get the URL ID
+                    await cursor.execute("SELECT id FROM urls WHERE url = ?", (url,))
+                    row = await cursor.fetchone()
+                    if not row:
+                        raise sqlite3.Error(f"Failed to get URL ID for {url}")
+                    url_id = row[0]
+                    logger.info("Got URL ID", extra={"url": url, "url_id": url_id})
+
+                    # Insert content with correct schema
+                    try:
+                        await cursor.execute(
+                            "INSERT INTO raw_content (url_id, content) VALUES (?, ?)",
+                            (url_id, result.markdown),
+                        )
+                        await conn.commit()
+                        logger.info(
+                            "Content stored",
+                            extra={
+                                "url": url,
+                                "url_id": url_id,
+                                "content_length": len(result.markdown),
+                            },
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Failed to store content",
+                            extra={
+                                "url": url,
+                                "url_id": url_id,
+                                "error": str(e),
+                                "error_type": type(e).__name__,
+                            },
+                        )
+                        raise
+            finally:
+                await self.db._release_connection(conn)
 
             logger.info(
-                "URL processed successfully", extra={"url": url, "search_id": search_id}
+                "URL processed successfully",
+                extra={
+                    "url": url,
+                    "search_id": search_id,
+                    "content_length": len(result.markdown),
+                },
             )
 
         except Exception as e:
-            logger.error("URL processing failed", extra={"url": url, "error": str(e)})
+            logger.error(
+                "URL processing failed",
+                extra={"url": url, "error": str(e), "error_type": type(e).__name__},
+            )
             raise
 
 
@@ -220,18 +273,27 @@ async def process_message(
     try:
         async with message.process():
             data = json.loads(message.body.decode())
+            # Handle both 'sid' and 'search_id' fields
+            search_id = data.get("search_id") or data.get("sid")
+            if not search_id:
+                raise KeyError("Neither 'search_id' nor 'sid' field found in message")
+
+            url = data.get("url")
+            if not url:
+                raise KeyError("'url' field not found in message")
+
             logger.info(
                 "Processing message",
-                extra={"url": data["url"], "search_id": data["search_id"]},
+                extra={"url": url, "search_id": search_id},
             )
 
             # Add to processing queue
-            await processor.processing_queue.put(data)
+            await processor.processing_queue.put({"url": url, "search_id": search_id})
 
             processing_time = (datetime.now() - start_time).total_seconds()
             logger.info(
                 "Message queued for processing",
-                extra={"url": data["url"], "processing_time": processing_time},
+                extra={"url": url, "processing_time": processing_time},
             )
 
     except json.JSONDecodeError as e:

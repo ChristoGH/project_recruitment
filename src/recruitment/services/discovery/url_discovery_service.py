@@ -8,7 +8,6 @@ It's based on the working recruitment_ad_search.py script.
 
 import os
 import json
-import logging
 from datetime import datetime
 from typing import Final
 from googlesearch import search
@@ -21,6 +20,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
+from ...logging_config import setup_logging, get_metrics_logger
 
 # =============================
 # 0. Settings – one source only
@@ -62,7 +62,8 @@ async def set_status(sid, **fields):
 # 3. FastAPI app and single RabbitMQ link
 # =============================
 
-logger = logging.getLogger(__name__)
+logger = setup_logging(__name__)
+metrics_logger = get_metrics_logger(__name__)
 
 
 @asynccontextmanager
@@ -124,11 +125,19 @@ async def gsearch_async(term, limit):
         )
 
 
-async def publish_urls(sid, urls):
+async def publish_urls(sid, term, urls):
     channel = app.state.amqp_channel
     for url in urls:
         msg = aio_pika.Message(
-            body=json.dumps({"sid": sid, "url": url, "ts": _now()}).encode(),
+            body=json.dumps(
+                {
+                    "search_id": sid,  # Explicit
+                    "sid": sid,  # Backward compat
+                    "term": term,  # Analytics
+                    "url": url,
+                    "ts": _now(),
+                }
+            ).encode(),
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
         )
         await channel.default_exchange.publish(msg, routing_key="recruitment_urls")
@@ -151,7 +160,7 @@ async def perform_search(sid, term):
     await set_status(sid, status="searching", started=_now())
     urls = await gsearch_async(term, BATCH_SIZE)
     await set_status(sid, status="publishing", url_count=len(urls))
-    await publish_urls(sid, urls)
+    await publish_urls(sid, term, urls)
     await set_status(sid, status="done", finished=_now())
     logger.info("Search %s finished; %d URLs published", sid, len(urls))
 
