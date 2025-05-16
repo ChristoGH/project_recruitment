@@ -1,10 +1,11 @@
 """Integration tests for database safety and migration integrity."""
 
 import os
-import pytest
-import sqlite3
 import shutil
+import sqlite3
 from datetime import datetime
+
+import pytest
 
 from recruitment.db.repository import RecruitmentDatabase
 from recruitment.services.processing.main import URLProcessor
@@ -107,9 +108,7 @@ async def test_processing_service_readonly(test_db):
     try:
         # Attempt to modify database (should fail)
         with pytest.raises(Exception):
-            await processor.db.batch_insert_urls(
-                [("http://test2.com", "test2.com", "test")]
-            )
+            await processor.db.batch_insert_urls([("http://test2.com", "test2.com", "test")])
     finally:
         await processor.stop()
 
@@ -161,7 +160,7 @@ async def test_migration_idempotency(test_db):
 def test_database_file_safety():
     """Test that database files are properly ignored by git."""
     # Check .gitignore
-    with open(".gitignore", "r") as f:
+    with open(".gitignore") as f:
         gitignore_content = f.read()
 
     assert "*.db" in gitignore_content

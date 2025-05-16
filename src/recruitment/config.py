@@ -1,6 +1,7 @@
-from pydantic_settings import BaseSettings
-from pydantic import Field
 from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 # Get the absolute path to the project root
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -25,9 +26,7 @@ class Settings(BaseSettings):
 
     # --- Search Configuration ---
     search_days_back: int = Field(default=7, env="SEARCH_DAYS_BACK")
-    search_interval_seconds: int = Field(
-        default=1800, env="SEARCH_INTERVAL_SECONDS"
-    )  # 30 minutes
+    search_interval_seconds: int = Field(default=1800, env="SEARCH_INTERVAL_SECONDS")  # 30 minutes
 
     # --- Batch Sizes ---
     google_search_batch_size: int = Field(default=50, env="GOOGLE_SEARCH_BATCH_SIZE")

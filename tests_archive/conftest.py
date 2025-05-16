@@ -1,7 +1,8 @@
 import os
 import sys
-import pytest
 from pathlib import Path
+
+import pytest
 
 # Add the project root to Python path
 project_root = Path(__file__).parent.parent

@@ -1,10 +1,12 @@
-import pytest
 import asyncio
-from recruitment.services.discovery.main import URLDiscoveryService
-from recruitment.services.processing.main import URLProcessingService
+
+import pytest
+
 from recruitment.models.url_models import URLDiscoveryConfig, URLProcessingConfig
 from recruitment.rabbitmq_utils import RabbitMQConnection
 from recruitment.recruitment_db import RecruitmentDatabase
+from recruitment.services.discovery.main import URLDiscoveryService
+from recruitment.services.processing.main import URLProcessingService
 
 
 @pytest.fixture
@@ -32,9 +34,7 @@ def discovery_config():
 
 @pytest.fixture
 def processing_config():
-    return URLProcessingConfig(
-        max_concurrent_requests=2, request_timeout=30, retry_attempts=3
-    )
+    return URLProcessingConfig(max_concurrent_requests=2, request_timeout=30, retry_attempts=3)
 
 
 @pytest.fixture
@@ -44,9 +44,7 @@ def discovery_service(discovery_config, rabbitmq_connection):
 
 @pytest.fixture
 def processing_service(processing_config, rabbitmq_connection, test_db):
-    return URLProcessingService(
-        config=processing_config, rabbitmq=rabbitmq_connection, db=test_db
-    )
+    return URLProcessingService(config=processing_config, rabbitmq=rabbitmq_connection, db=test_db)
 
 
 @pytest.mark.asyncio

@@ -5,8 +5,9 @@ This module provides a clean async interface for the web crawler.
 """
 
 import os
-from datetime import datetime
 from contextlib import asynccontextmanager
+from datetime import datetime
+
 from crawl4ai import AsyncWebCrawler, BrowserConfig
 
 # Disable colorama output globally

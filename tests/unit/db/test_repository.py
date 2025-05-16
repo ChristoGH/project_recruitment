@@ -4,19 +4,17 @@ Test module for the RecruitmentDatabase class.
 
 import os
 import sqlite3
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-import sys
 
 # Add the parent directory to the Python path
 sys.path.append(
-    os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    )
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 )
 
-from recruitment.db.repository import RecruitmentDatabase, DatabaseError
+from recruitment.db.repository import DatabaseError, RecruitmentDatabase
 
 
 @pytest.fixture

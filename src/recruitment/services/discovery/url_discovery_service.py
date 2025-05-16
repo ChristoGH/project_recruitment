@@ -6,21 +6,22 @@ This FastAPI service searches for recruitment URLs and publishes them to a Rabbi
 It's based on the working recruitment_ad_search.py script.
 """
 
-import os
+import asyncio
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Final
-from googlesearch import search
-from fastapi import FastAPI, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-import asyncio
-from contextlib import asynccontextmanager
-import aio_pika
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
-from ...logging_config import setup_logging, get_metrics_logger
+import aio_pika
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import BackgroundTasks, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from googlesearch import search
+
+from ...logging_config import get_metrics_logger, setup_logging
 
 # =============================
 # 0. Settings – one source only
@@ -114,9 +115,7 @@ async def gsearch_async(term, limit):
     loop = asyncio.get_running_loop()
     try:
         # First attempt: new approach with num_results
-        return await loop.run_in_executor(
-            _executor, lambda: list(search(term, num_results=limit))
-        )
+        return await loop.run_in_executor(_executor, lambda: list(search(term, num_results=limit)))
     except Exception as e:
         logger.warning(f"New search method failed: {e}, trying fallback...")
         # Fallback: original approach with tld, num, stop, pause

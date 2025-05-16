@@ -1,6 +1,7 @@
 """Configuration validation for recruitment advertisement search."""
 
-from typing import Dict, Any
+from typing import Any
+
 from recruitment.logging_config import setup_logging
 
 logger = setup_logging("config_validator")
@@ -10,7 +11,7 @@ class ConfigValidator:
     """Validates search configuration structure and values."""
 
     @staticmethod
-    def validate_config(config: Dict[str, Any]) -> bool:
+    def validate_config(config: dict[str, Any]) -> bool:
         """Validate the search configuration.
 
         Args:
@@ -45,15 +46,12 @@ class ConfigValidator:
                     return False
 
                 # Validate days_back is a positive integer
-                if (
-                    not isinstance(run_config["days_back"], int)
-                    or run_config["days_back"] <= 0
-                ):
+                if not isinstance(run_config["days_back"], int) or run_config["days_back"] <= 0:
                     logger.error("'days_back' must be a positive integer")
                     return False
 
             return True
 
         except Exception as e:
-            logger.error(f"Error validating configuration: {str(e)}")
+            logger.error(f"Error validating configuration: {e!s}")
             return False

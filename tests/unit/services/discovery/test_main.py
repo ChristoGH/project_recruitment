@@ -1,25 +1,19 @@
 """Test module for URL discovery service."""
 
+import json
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch
 from fastapi import FastAPI
-import sys
-import os
 
-# Add the parent directory to the Python path
-sys.path.append(
-    os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        )
-    )
-)
-
-from src.recruitment.services.discovery.main import (
-    SearchConfig,
-    RecruitmentAdSearch,
-    is_valid_url,
-    publish_urls_to_queue,
+from recruitment.services.discovery.url_discovery_service import (
+    check,
+    gsearch_async,
+    health_check,
+    perform_search,
+    publish_urls,
+    search_results,
+    start_search,
 )
 
 
@@ -30,163 +24,112 @@ def app():
 
 @pytest.fixture
 def search_config():
-    return SearchConfig(
-        id="test_search",
-        days_back=7,
-        excluded_domains=["example.com"],
-        academic_suffixes=[".edu"],
-        recruitment_terms=['"recruitment advert"', '"job vacancy"', '"hiring now"'],
-    )
+    return {"id": "test_search", "term": "recruitment jobs South Africa"}
 
 
 @pytest.fixture
 def mock_rabbitmq():
-    with patch("pika.BlockingConnection") as mock_conn:
-        mock_channel = Mock()
-        mock_conn.return_value.channel.return_value = mock_channel
-        yield mock_conn, mock_channel
-
-
-def test_is_valid_url():
-    """Test URL validation function."""
-    # Valid URLs
-    assert is_valid_url("https://example.com") is True
-    assert is_valid_url("http://example.com/path") is True
-    assert is_valid_url("https://example.com?query=param") is True
-
-    # Invalid URLs
-    assert is_valid_url("ftp://example.com") is False  # Invalid scheme
-    assert is_valid_url("example.com") is False  # Missing scheme
-    assert is_valid_url("https://") is False  # Missing netloc
-    assert is_valid_url("https://example.com/" + "a" * 2001) is False  # Too long
-    assert is_valid_url("https://example.com/\u2603") is False  # Invalid character
-    assert is_valid_url("") is False  # Empty string
-    assert is_valid_url(None) is False  # None value
-
-
-def test_search_config_validation(search_config):
-    assert search_config.id == "test_search"
-    assert search_config.days_back == 7
-    assert len(search_config.excluded_domains) == 1
-    assert len(search_config.academic_suffixes) == 1
-    assert len(search_config.recruitment_terms) == 3
-
-
-def test_recruitment_ad_search_initialization(search_config):
-    searcher = RecruitmentAdSearch(search_config)
-    assert searcher.search_name == "test_search"
-    assert searcher.days_back == 7
-    assert len(searcher.excluded_domains) == 1
-    assert len(searcher.academic_suffixes) == 1
-    assert len(searcher.recruitment_terms) == 3
-
-
-def test_is_valid_recruitment_site(search_config):
-    searcher = RecruitmentAdSearch(search_config)
-    assert searcher.is_valid_recruitment_site("https://example.com") is False
-    assert searcher.is_valid_recruitment_site("https://valid-job-site.com") is True
-    assert searcher.is_valid_recruitment_site("https://university.edu") is False
-
-
-def test_construct_query(search_config):
-    searcher = RecruitmentAdSearch(search_config)
-    start_date = "2024-01-01"
-    end_date = "2024-01-07"
-    query = searcher.construct_query(start_date, end_date)
-    assert "recruitment advert" in query
-    assert "job vacancy" in query
-    assert "hiring now" in query
-    assert "South Africa" in query
-    assert start_date in query
-    assert end_date in query
+    mock_channel = AsyncMock()
+    mock_channel.default_exchange.publish = AsyncMock()
+    return mock_channel
 
 
 @pytest.mark.asyncio
-async def test_publish_urls_to_queue(mock_rabbitmq):
-    mock_conn, mock_channel = mock_rabbitmq
+async def test_gsearch_async():
+    """Test the Google search function."""
+    test_urls = ["https://example1.com", "https://example2.com"]
+    with patch("recruitment.services.discovery.url_discovery_service.search") as mock_search:
+        mock_search.return_value = test_urls
+        urls = await gsearch_async("test term", 10)
+        assert urls == test_urls
+        mock_search.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_publish_urls(mock_rabbitmq):
+    """Test publishing URLs to RabbitMQ."""
     urls = ["https://example1.com", "https://example2.com"]
     search_id = "test_search"
+    term = "test term"
 
-    await publish_urls_to_queue(urls, search_id)
+    with patch("recruitment.services.discovery.url_discovery_service.app") as mock_app:
+        mock_app.state.amqp_channel = mock_rabbitmq
+        await publish_urls(search_id, term, urls)
 
-    assert mock_channel.basic_publish.call_count == len(urls)
-    for call in mock_channel.basic_publish.call_args_list:
-        args, kwargs = call
-        assert kwargs["exchange"] == ""
-        assert kwargs["routing_key"] == "recruitment_urls"
-        assert kwargs["properties"].delivery_mode == 2
+        assert mock_rabbitmq.default_exchange.publish.call_count == len(urls)
+        for call in mock_rabbitmq.default_exchange.publish.call_args_list:
+            args, kwargs = call
+            message = json.loads(args[0].body.decode())
+            assert message["search_id"] == search_id
+            assert message["term"] == term
+            assert message["url"] in urls
+            assert "ts" in message
 
 
 @pytest.mark.asyncio
 async def test_perform_search(search_config, mock_rabbitmq):
-    with patch(
-        "recruitment.services.discovery.url_discovery_service.search"
-    ) as mock_search:
-        mock_search.return_value = [
-            "https://valid-job-site.com/job1",
-            "https://valid-job-site.com/job2",
-        ]
+    """Test the perform_search function."""
+    search_id = search_config["id"]
+    term = search_config["term"]
+    test_urls = ["https://example1.com", "https://example2.com"]
 
-        from recruitment.services.discovery.url_discovery_service import (
-            perform_search,
-        )
+    with (
+        patch("recruitment.services.discovery.url_discovery_service.gsearch_async") as mock_search,
+        patch("recruitment.services.discovery.url_discovery_service.publish_urls") as mock_publish,
+        patch("recruitment.services.discovery.url_discovery_service.app") as mock_app,
+    ):
+        mock_search.return_value = test_urls
+        mock_app.state.amqp_channel = mock_rabbitmq
 
-        response = await perform_search(search_config, Mock())
+        await perform_search(search_id, term)
 
-        assert response.search_id.startswith("test_search_")
-        assert response.urls_found == 2
-        assert len(response.urls) == 2
-        assert "valid-job-site.com" in response.urls[0]
+        mock_search.assert_called_once_with(term, 5)  # BATCH_SIZE is 5
+        mock_publish.assert_called_once_with(search_id, term, test_urls)
+        assert search_results[search_id]["status"] == "done"
+        assert search_results[search_id]["url_count"] == len(test_urls)
 
 
 @pytest.mark.asyncio
-async def test_get_search_status():
-    from recruitment.services.discovery.url_discovery_service import (
-        get_search_status,
-        search_results,
-    )
+async def test_start_search(search_config):
+    """Test the start_search endpoint."""
+    with patch(
+        "recruitment.services.discovery.url_discovery_service.perform_search"
+    ) as mock_search:
+        response = await start_search(search_config, Mock())
+        assert response["id"] == search_config["id"]
+        assert response["status"] == "queued"
+        mock_search.assert_called_once()
 
-    # Setup test data
-    search_id = "test_search_20240101"
+
+@pytest.mark.asyncio
+async def test_check():
+    """Test the check endpoint."""
+    search_id = "test_search"
     search_results[search_id] = {
-        "status": "completed",
-        "urls_found": 5,
-        "timestamp": "2024-01-01T00:00:00",
+        "status": "done",
+        "url_count": 2,
+        "started": "2024-01-01T00:00:00",
+        "finished": "2024-01-01T00:00:01",
     }
 
-    response = await get_search_status(search_id)
-    assert response.search_id == search_id
-    assert response.status == "completed"
-    assert response.urls_found == 5
-
-
-@pytest.mark.asyncio
-async def test_get_search_urls():
-    from recruitment.services.discovery.url_discovery_service import (
-        get_search_urls,
-        search_results,
-    )
-
-    # Setup test data
-    search_id = "test_search_20240101"
-    test_urls = ["https://example1.com", "https://example2.com"]
-    search_results[search_id] = {"urls": test_urls}
-
-    response = await get_search_urls(search_id)
-    assert response == test_urls
+    response = await check(search_id)
+    assert response["status"] == "done"
+    assert response["url_count"] == 2
 
 
 @pytest.mark.asyncio
 async def test_health_check():
-    from recruitment.services.discovery.url_discovery_service import health_check
+    """Test the health check endpoint."""
+    with patch("recruitment.services.discovery.url_discovery_service.app") as mock_app:
+        # Test healthy state
+        mock_channel = AsyncMock()
+        mock_channel.is_closed = False
+        mock_app.state.amqp_channel = mock_channel
 
-    with patch("pika.BlockingConnection") as mock_conn:
-        mock_conn.return_value.is_closed = False
         response = await health_check()
         assert response["status"] == "healthy"
-        assert response["rabbitmq"] == "connected"
 
-        mock_conn.side_effect = Exception("Connection failed")
+        # Test unhealthy state
+        mock_channel.is_closed = True
         response = await health_check()
         assert response["status"] == "unhealthy"
-        assert "error" in response

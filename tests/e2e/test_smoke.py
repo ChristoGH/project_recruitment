@@ -1,6 +1,7 @@
+import time
+
 import pytest
 import requests
-import time
 
 
 @pytest.fixture
@@ -29,16 +30,12 @@ def wait_for_service(url: str, timeout: int = 300) -> bool:
 
 def test_discovery_service_health(discovery_service_url: str):
     """Test that the discovery service is healthy."""
-    assert wait_for_service(
-        discovery_service_url
-    ), "Discovery service did not become healthy"
+    assert wait_for_service(discovery_service_url), "Discovery service did not become healthy"
 
 
 def test_processing_service_health(processing_service_url: str):
     """Test that the processing service is healthy."""
-    assert wait_for_service(
-        processing_service_url
-    ), "Processing service did not become healthy"
+    assert wait_for_service(processing_service_url), "Processing service did not become healthy"
 
 
 def test_discovery_service_ready(discovery_service_url: str):

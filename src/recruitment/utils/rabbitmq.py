@@ -1,7 +1,8 @@
-import os
-import aio_pika
 import logging
-from typing import AsyncGenerator
+import os
+from collections.abc import AsyncGenerator
+
+import aio_pika
 
 RABBIT_QUEUE = "recruitment_urls"
 

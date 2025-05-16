@@ -4,12 +4,13 @@ Simple script to search for recruitment ads and save URLs to CSV.
 Usage: python recruitment_ad_search.py --days_back 1
 """
 
-import csv
 import argparse
+import csv
 import logging
-from datetime import datetime, timedelta
-from googlesearch import search
 import os
+from datetime import datetime, timedelta
+
+from googlesearch import search
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

@@ -1,30 +1,31 @@
 # Add this to a utils.py file or in the main processing file
 
 from typing import Dict, Type
+
 from pydantic import BaseModel
 
 # Import all the necessary model classes from url_models.py
 from recruitment.models.url_models import (
     AdvertResponse,
+    AgencyResponse,
+    AttributesResponse,
+    BenefitsResponse,
+    CompanyPhoneNumberResponse,
+    CompanyResponse,
+    ContactPersonResponse,
+    DutiesResponse,
+    EmailResponse,
+    IndustryResponse,
     JobAdvertResponse,
     JobResponse,
-    LocationResponse,
-    ContactPersonResponse,
-    SkillExperienceResponse,
-    AttributesResponse,
-    AgencyResponse,
-    CompanyResponse,
-    IndustryResponse,
-    BenefitsResponse,
-    DutiesResponse,
-    QualificationsResponse,
     LinkResponse,
-    EmailResponse,
-    CompanyPhoneNumberResponse,
+    LocationResponse,
+    QualificationsResponse,
+    SkillExperienceResponse,
 )
 
 # Map prompt keys to their corresponding model classes
-PROMPT_MODEL_MAP: Dict[str, Type[BaseModel]] = {
+PROMPT_MODEL_MAP: dict[str, type[BaseModel]] = {
     # Existing mappings
     "recruitment_prompt": AdvertResponse,
     "company_prompt": CompanyResponse,
@@ -46,7 +47,7 @@ PROMPT_MODEL_MAP: Dict[str, Type[BaseModel]] = {
 }
 
 
-def get_model_for_prompt(prompt_key: str) -> Type[BaseModel]:
+def get_model_for_prompt(prompt_key: str) -> type[BaseModel]:
     """
     Get the appropriate Pydantic model class for a specific prompt key.
 

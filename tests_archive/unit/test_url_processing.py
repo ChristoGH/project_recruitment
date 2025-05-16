@@ -1,15 +1,15 @@
-import pytest
 from unittest.mock import AsyncMock
-from recruitment.services.processing.main import URLProcessingService
-from recruitment.models.url_models import URLProcessingConfig, URLProcessingResult
+
+import pytest
+
 from recruitment.models.db_models import JobPosting
+from recruitment.models.url_models import URLProcessingConfig, URLProcessingResult
+from recruitment.services.processing.main import URLProcessingService
 
 
 @pytest.fixture
 def processing_config():
-    return URLProcessingConfig(
-        max_concurrent_requests=2, request_timeout=30, retry_attempts=3
-    )
+    return URLProcessingConfig(max_concurrent_requests=2, request_timeout=30, retry_attempts=3)
 
 
 @pytest.fixture
@@ -31,9 +31,7 @@ def mock_db():
 
 @pytest.fixture
 def processing_service(processing_config, mock_rabbitmq, mock_db):
-    service = URLProcessingService(
-        config=processing_config, rabbitmq=mock_rabbitmq, db=mock_db
-    )
+    service = URLProcessingService(config=processing_config, rabbitmq=mock_rabbitmq, db=mock_db)
     # Mock the actual URL processing method
     service._process_url = AsyncMock(
         return_value=URLProcessingResult(
@@ -55,9 +53,7 @@ def test_processing_service_initialization(processing_service, processing_config
         processing_service.config.max_concurrent_requests
         == processing_config.max_concurrent_requests
     )
-    assert (
-        processing_service.config.request_timeout == processing_config.request_timeout
-    )
+    assert processing_service.config.request_timeout == processing_config.request_timeout
     assert processing_service.config.retry_attempts == processing_config.retry_attempts
 
 

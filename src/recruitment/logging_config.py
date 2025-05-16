@@ -1,13 +1,14 @@
 # logging_config.py
+import json
 import logging
 import logging.handlers
 import os
-from pathlib import Path
-import json
-from typing import Optional
-from datetime import datetime, timezone
-import socket
 import platform
+import socket
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
 import psutil
 
 # Get the project root directory
@@ -25,9 +26,7 @@ try:
 except OSError as e:
     # If we can't create the directory, fall back to console-only logging
     LOG_DIR = None
-    print(
-        f"Warning: Could not create log directory: {e}. Falling back to console-only logging."
-    )
+    print(f"Warning: Could not create log directory: {e}. Falling back to console-only logging.")
 
 
 class SensitiveDataFilter(logging.Filter):
@@ -127,7 +126,7 @@ class MetricsLogger:
 
             self.logger.info("System metrics", extra={"metrics": metrics})
         except Exception as e:
-            self.logger.error(f"Failed to log system metrics: {str(e)}")
+            self.logger.error(f"Failed to log system metrics: {e!s}")
 
     def log_process_metrics(self, pid: Optional[int] = None) -> None:
         """Log metrics for a specific process.
@@ -148,7 +147,7 @@ class MetricsLogger:
 
             self.logger.info("Process metrics", extra={"metrics": metrics})
         except Exception as e:
-            self.logger.error(f"Failed to log process metrics: {str(e)}")
+            self.logger.error(f"Failed to log process metrics: {e!s}")
 
 
 def setup_logging(name: str) -> logging.Logger:
@@ -234,7 +233,7 @@ def log_structured(logger, level, message, data=None, **kwargs):
             try:
                 message = f"{message} {json.dumps(data, default=str)}"
             except (TypeError, ValueError):
-                message = f"{message} {str(data)}"
+                message = f"{message} {data!s}"
         else:
             message = f"{message} {data}"
 

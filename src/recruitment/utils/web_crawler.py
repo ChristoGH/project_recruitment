@@ -7,13 +7,14 @@ in a structured format.
 
 import asyncio
 import traceback
-from typing import Dict, List
 from multiprocessing import Process
-from queue import Queue, Empty
+from queue import Empty, Queue
+from typing import Optional
 
-from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig, CacheMode
-from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 from crawl4ai import AsyncWebCrawler
+from crawl4ai.async_configs import BrowserConfig, CacheMode, CrawlerRunConfig
+from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+
 from ..logging_config import setup_logging
 
 # Create module-specific logger
@@ -28,8 +29,8 @@ class WebCrawlerResult:
         success: bool,
         markdown: str = "",
         text: str = "",
-        media: Dict[str, List[Dict[str, str]]] = None,
-        links: Dict[str, List[Dict[str, str]]] = None,
+        media: Optional[dict[str, list[dict[str, str]]]] = None,
+        links: Optional[dict[str, list[dict[str, str]]]] = None,
         error_message: str = "",
         url: str = "",
     ):
@@ -45,7 +46,7 @@ class WebCrawlerResult:
 async def crawl_website(
     url: str,
     word_count_threshold: int = 10,
-    excluded_tags: List[str] = None,
+    excluded_tags: Optional[list[str]] = None,
     exclude_external_links: bool = True,
     process_iframes: bool = True,
     remove_overlay_elements: bool = True,
@@ -115,17 +116,13 @@ async def crawl_website(
                 # If it has markdown but no success flag, consider it successful
                 if hasattr(result, "markdown") and result.markdown:
                     if verbose:
-                        logger.debug(
-                            f"Found markdown content of length: {len(result.markdown)}"
-                        )
+                        logger.debug(f"Found markdown content of length: {len(result.markdown)}")
                     return WebCrawlerResult(
                         success=True,
                         markdown=result.markdown,
                         # Don't try to access text attribute as it might not exist
                         media=getattr(result, "media", {"images": []}),
-                        links=getattr(
-                            result, "links", {"internal": [], "external": []}
-                        ),
+                        links=getattr(result, "links", {"internal": [], "external": []}),
                         url=url,
                     )
                 else:
@@ -138,9 +135,7 @@ async def crawl_website(
             # Handle successful case - note we're not accessing the text attribute
             if result.success:
                 if verbose:
-                    logger.debug(
-                        f"Crawler successful with markdown length: {len(result.markdown)}"
-                    )
+                    logger.debug(f"Crawler successful with markdown length: {len(result.markdown)}")
                 return WebCrawlerResult(
                     success=True,
                     markdown=result.markdown,
@@ -163,12 +158,12 @@ async def crawl_website(
     except Exception as e:
         error_details = traceback.format_exc()
         if verbose:
-            logger.error(f"Crawler exception: {str(e)}")
+            logger.error(f"Crawler exception: {e!s}")
             logger.error(f"Traceback: {error_details}")
 
         return WebCrawlerResult(
             success=False,
-            error_message=f"Crawl failed with exception: {str(e)}",
+            error_message=f"Crawl failed with exception: {e!s}",
             url=url,
         )
 
@@ -208,7 +203,7 @@ def _run_in_new_loop(coro, *args, **kwargs):
 def crawl_website_sync(
     url: str,
     word_count_threshold: int = 10,
-    excluded_tags: List[str] = None,
+    excluded_tags: Optional[list[str]] = None,
     exclude_external_links: bool = True,
     process_iframes: bool = True,
     remove_overlay_elements: bool = True,
@@ -310,12 +305,12 @@ def crawl_website_sync(
     except Exception as e:
         error_details = traceback.format_exc()
         if verbose:
-            logger.error(f"Crawler exception: {str(e)}")
+            logger.error(f"Crawler exception: {e!s}")
             logger.error(f"Traceback: {error_details}")
 
         return WebCrawlerResult(
             success=False,
-            error_message=f"Crawl failed with exception: {str(e)}",
+            error_message=f"Crawl failed with exception: {e!s}",
             url=url,
         )
 
@@ -352,12 +347,12 @@ def run_in_process(
             loop.close()
     except Exception as e:
         if verbose:
-            logger.error(f"Process exception: {str(e)}")
+            logger.error(f"Process exception: {e!s}")
         # Put the error in the queue
         queue.put(
             WebCrawlerResult(
                 success=False,
-                error_message=f"Process failed with exception: {str(e)}",
+                error_message=f"Process failed with exception: {e!s}",
                 url=url,
             )
         )
@@ -415,11 +410,11 @@ def crawl_website_sync_v2(
     except Exception as e:
         error_details = traceback.format_exc()
         if verbose:
-            logger.error(f"Crawler exception: {str(e)}")
+            logger.error(f"Crawler exception: {e!s}")
             logger.error(f"Traceback: {error_details}")
 
         return WebCrawlerResult(
             success=False,
-            error_message=f"Crawl failed with exception: {str(e)}",
+            error_message=f"Crawl failed with exception: {e!s}",
             url=url,
         )

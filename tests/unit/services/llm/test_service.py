@@ -1,7 +1,7 @@
 """Test module for LLM service."""
 
-import sys
 import os
+import sys
 
 # Add the parent directory to the Python path
 sys.path.append(

@@ -4,11 +4,11 @@ This module provides functionality for storing and retrieving recruitment-relate
 from a SQLite database, including URLs, articles, and their metadata.
 """
 
+import logging
 import os
 import sqlite3
-from typing import List, Dict, Any, Optional
-import logging
 from datetime import datetime
+from typing import Any, Optional
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -83,10 +83,10 @@ class Storage:
                 conn.commit()
                 return cursor.rowcount > 0
         except sqlite3.Error as e:
-            logger.error(f"Error saving URL to database: {str(e)}")
+            logger.error(f"Error saving URL to database: {e!s}")
             return False
 
-    def get_unprocessed_urls(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_unprocessed_urls(self, limit: int = 100) -> list[dict[str, Any]]:
         """Get a list of unprocessed URLs from the database.
 
         Args:
@@ -105,7 +105,7 @@ class Storage:
                 )
                 return [dict(row) for row in cursor.fetchall()]
         except sqlite3.Error as e:
-            logger.error(f"Error retrieving unprocessed URLs: {str(e)}")
+            logger.error(f"Error retrieving unprocessed URLs: {e!s}")
             return []
 
     def mark_url_as_processed(self, url_id: int) -> bool:
@@ -120,13 +120,11 @@ class Storage:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE urls SET processed = TRUE WHERE id = ?", (url_id,)
-                )
+                cursor.execute("UPDATE urls SET processed = TRUE WHERE id = ?", (url_id,))
                 conn.commit()
                 return cursor.rowcount > 0
         except sqlite3.Error as e:
-            logger.error(f"Error marking URL as processed: {str(e)}")
+            logger.error(f"Error marking URL as processed: {e!s}")
             return False
 
     def save_article(
@@ -160,5 +158,5 @@ class Storage:
                 conn.commit()
                 return True
         except sqlite3.Error as e:
-            logger.error(f"Error saving article to database: {str(e)}")
+            logger.error(f"Error saving article to database: {e!s}")
             return False

@@ -1,7 +1,7 @@
 """Unit tests for URL Discovery Service."""
 
-import pytest
 import aio_pika
+import pytest
 
 
 @pytest.mark.asyncio

@@ -1,15 +1,15 @@
 import asyncio
+import logging
+
 import requests
 from bs4 import BeautifulSoup
-import logging
-from typing import List
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def get_recruitment_urls(keywords: List[str], locations: List[str]) -> List[str]:
+async def get_recruitment_urls(keywords: list[str], locations: list[str]) -> list[str]:
     """Get a list of recruitment URLs from Google search."""
     urls = []
 
@@ -32,9 +32,7 @@ async def get_recruitment_urls(keywords: List[str], locations: List[str]) -> Lis
                 )
 
                 if response.status_code != 200:
-                    logger.warning(
-                        f"Non-200 response from Google: {response.status_code}"
-                    )
+                    logger.warning(f"Non-200 response from Google: {response.status_code}")
                     continue
 
                 soup = BeautifulSoup(response.text, "html.parser")
@@ -49,15 +47,13 @@ async def get_recruitment_urls(keywords: List[str], locations: List[str]) -> Lis
                             found_urls.append(url)
                             logger.debug(f"Found valid URL: {url}")
 
-                logger.info(
-                    f'Found {len(found_urls)} new URLs for term: "{search_query}"'
-                )
+                logger.info(f'Found {len(found_urls)} new URLs for term: "{search_query}"')
 
                 # Add a delay between requests to avoid rate limiting
                 await asyncio.sleep(5)
 
             except Exception as e:
-                logger.error(f'Error searching for term "{search_query}": {str(e)}')
+                logger.error(f'Error searching for term "{search_query}": {e!s}')
 
     logger.info(f"Total unique URLs found: {len(urls)}")
     return urls
@@ -81,9 +77,7 @@ async def test_search():
 
     try:
         # Get URLs directly
-        urls = await get_recruitment_urls(
-            search_config["keywords"], search_config["locations"]
-        )
+        urls = await get_recruitment_urls(search_config["keywords"], search_config["locations"])
 
         print(f"Found {len(urls)} URLs:")
         for url in urls:

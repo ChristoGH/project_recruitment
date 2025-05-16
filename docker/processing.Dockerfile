@@ -38,7 +38,7 @@ RUN playwright install chromium
 RUN playwright install-deps
 
 # Set environment variables
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 
 # Create necessary directories and set permissions
@@ -48,5 +48,5 @@ RUN apt-get update && apt-get install -y sqlite3 && rm -rf /var/lib/apt/lists/*
 
 
 # Run the service
-CMD ["uvicorn", "src.recruitment.services.processing.main:app", "--host", "0.0.0.0", "--port", "8001"] 
+CMD ["uvicorn", "recruitment.services.processing.main:app", "--host", "0.0.0.0", "--port", "8001"] 
 

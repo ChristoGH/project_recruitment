@@ -5,34 +5,34 @@ URL Processing Service
 This FastAPI service consumes URLs from a RabbitMQ queue and stores their content in the database.
 """
 
-import os
-import json
 import asyncio
-from datetime import datetime
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-from contextlib import asynccontextmanager
-import aio_pika
-from pathlib import Path
-from typing import Dict, Any, List
-import psutil
+import json
+import os
+import sqlite3
 from asyncio import Queue, Task
 from concurrent.futures import ThreadPoolExecutor
-import sqlite3
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List
+
+import aio_pika
+import psutil
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
-from ...logging_config import setup_logging, get_metrics_logger
+from recruitment.db.repository import RecruitmentDatabase
+
+from ...logging_config import get_metrics_logger, setup_logging
 from ...utils.rabbitmq import RABBIT_QUEUE
 from ...utils.web_crawler_wrapper import crawl_website
-from ...db.repository import (
-    RecruitmentDatabase,
-)
 
 # Load environment variables
 load_dotenv()
@@ -58,21 +58,19 @@ DB_PATH = os.getenv(
 
 # Ensure database directory exists
 try:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-except OSError as e:
-    logger.warning(
-        f"Could not create database directory: {e}. Using in-memory database."
-    )
-    DB_PATH = ":memory:"
+    db_path = Path(DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+except OSError as err:
+    raise RuntimeError(
+        f"Cannot create DB dir {db_path} (check volume mount & permissions): {err}"
+    ) from err
 
 logger.info(
     "Database configuration",
     extra={
         "db_path": DB_PATH,
-        "db_dir_exists": os.path.exists(os.path.dirname(DB_PATH))
-        if DB_PATH != ":memory:"
-        else True,
-        "db_file_exists": os.path.exists(DB_PATH) if DB_PATH != ":memory:" else True,
+        "db_dir_exists": os.path.exists(os.path.dirname(DB_PATH)),
+        "db_file_exists": os.path.exists(DB_PATH),
     },
 )
 
@@ -153,9 +151,7 @@ class URLProcessor:
                 urls_to_process = []
                 for _ in range(BATCH_SIZE):
                     try:
-                        url_data = await asyncio.wait_for(
-                            self.processing_queue.get(), timeout=1.0
-                        )
+                        url_data = await asyncio.wait_for(self.processing_queue.get(), timeout=1.0)
                         urls_to_process.append(url_data)
                     except asyncio.TimeoutError:
                         break
@@ -180,9 +176,7 @@ class URLProcessor:
                             extra={"url": url_data["url"], "error": str(result)},
                         )
                     else:
-                        logger.info(
-                            "URL processing completed", extra={"url": url_data["url"]}
-                        )
+                        logger.info("URL processing completed", extra={"url": url_data["url"]})
 
             except asyncio.CancelledError:
                 break
@@ -251,13 +245,9 @@ class URLProcessor:
                     url_id = row[0]
                     logger.info("Got URL ID", extra={"url": url, "url_id": url_id})
 
-                    # Insert content with correct schema
+                    # Insert content using helper method
                     try:
-                        await cursor.execute(
-                            "INSERT INTO raw_content (url_id, content) VALUES (?, ?)",
-                            (url_id, result.markdown),
-                        )
-                        await conn.commit()
+                        await self.db.upsert_raw_content(url_id, result.markdown)
                         logger.info(
                             "Content stored",
                             extra={
@@ -298,9 +288,7 @@ class URLProcessor:
             await self._publish_to_dead_letter(url_data, str(e))
             raise
 
-    async def _publish_to_dead_letter(
-        self, url_data: Dict[str, Any], error: str
-    ) -> None:
+    async def _publish_to_dead_letter(self, url_data: Dict[str, Any], error: str) -> None:
         """Publish failed URL to dead-letter queue.
 
         Args:
@@ -329,9 +317,7 @@ class URLProcessor:
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                 )
 
-                await channel.default_exchange.publish(
-                    message, routing_key=DEAD_LETTER_QUEUE
-                )
+                await channel.default_exchange.publish(message, routing_key=DEAD_LETTER_QUEUE)
 
                 logger.info(
                     "Published to dead-letter queue",
@@ -344,9 +330,7 @@ class URLProcessor:
             )
 
 
-async def process_message(
-    message: aio_pika.IncomingMessage, processor: URLProcessor
-) -> None:
+async def process_message(message: aio_pika.IncomingMessage, processor: URLProcessor) -> None:
     """Process a single message with timeout."""
     start_time = datetime.now()
 
@@ -477,9 +461,13 @@ app.add_middleware(
 async def health_check() -> Dict[str, Any]:
     """Health check endpoint."""
     try:
-        # Check database connection
-        db = RecruitmentDatabase(DB_PATH)
-        if not await db.check_connection():
+        # Get the processor from app state
+        processor = getattr(app.state, "processor", None)
+        if not processor:
+            raise HTTPException(status_code=503, detail="Processor not initialized")
+
+        # Check database connection using existing connection
+        if not await processor.db.check_connection():
             raise HTTPException(status_code=503, detail="Database connection failed")
 
         # Get system metrics

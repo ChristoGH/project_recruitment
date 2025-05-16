@@ -28,6 +28,7 @@ services:
       - SCHEDULED_SEARCH_INTERVAL_SECONDS=300
       - GOOGLE_SEARCH_BATCH_SIZE=5
       - LOG_LEVEL=DEBUG
+      - RECRUITMENT_DB_PATH=/app/src/recruitment/db/recruitment.db
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -37,7 +38,7 @@ services:
       timeout: 10s
       retries: 3
     volumes:
-      - ./src/recruitment/db:/app/src/recruitment/db
+      - ./recruitment-data:/app/src/recruitment/db
       - recruitment_logs:/app/logs
     networks:
       - recruitment_network
@@ -63,7 +64,7 @@ services:
       timeout: 10s
       retries: 3
     volumes:
-      - ./src/recruitment/db:/app/src/recruitment/db
+      - ./recruitment-data:/app/src/recruitment/db
       - recruitment_logs:/app/logs
     networks:
       - recruitment_network

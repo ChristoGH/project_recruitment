@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock
-from recruitment.services.discovery.main import URLDiscoveryService
+
+import pytest
+
 from recruitment.models.url_models import URLDiscoveryConfig
+from recruitment.services.discovery.main import URLDiscoveryService
 
 
 @pytest.fixture
@@ -33,9 +35,7 @@ def discovery_service(discovery_config, mock_rabbitmq):
 def test_discovery_service_initialization(discovery_service, discovery_config):
     assert discovery_service.config.search_terms == discovery_config.search_terms
     assert discovery_service.config.max_results == discovery_config.max_results
-    assert (
-        discovery_service.config.interval_minutes == discovery_config.interval_minutes
-    )
+    assert discovery_service.config.interval_minutes == discovery_config.interval_minutes
 
 
 @pytest.mark.asyncio

@@ -1,16 +1,17 @@
 # Enhanced models.py with Pydantic V2 validation
 
-from typing import List, Optional, Literal, Dict, Any, Tuple, Union
-from pydantic import (
-    BaseModel,
-    Field,
-    field_validator,
-    EmailStr,
-    model_validator,
-    ConfigDict,
-)
 import re
 from datetime import datetime
+from typing import Any, Literal, Optional, Union
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from recruitment.logging_config import setup_logging
 
@@ -21,7 +22,7 @@ logger = setup_logging("recruitment_models")
 class AdvertResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     answer: Literal["yes", "no"]  # Restrict to only valid values
-    evidence: Optional[List[str]] = None
+    evidence: Optional[list[str]] = None
 
     @model_validator(mode="after")
     def validate_evidence_provided(self):
@@ -34,12 +35,12 @@ class AdvertResponse(BaseModel):
 class ConfirmResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     answer: Literal["yes", "no"]
-    evidence: Optional[List[str]] = None
+    evidence: Optional[list[str]] = None
 
 
 class JobResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    jobs: Optional[List[str]] = None
+    jobs: Optional[list[str]] = None
 
     @field_validator("jobs")
     @classmethod
@@ -59,7 +60,7 @@ class LocationResponse(BaseModel):
 
 class ContactPersonResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    contacts: Optional[List[str]] = None
+    contacts: Optional[list[str]] = None
 
     @field_validator("contacts")
     @classmethod
@@ -67,15 +68,13 @@ class ContactPersonResponse(BaseModel):
         if v:
             for contact in v:
                 if len(contact.strip().split()) < 2:
-                    raise ValueError(
-                        f"Contact '{contact}' should include first and last name"
-                    )
+                    raise ValueError(f"Contact '{contact}' should include first and last name")
         return v
 
 
 class SkillsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    skills: Optional[List[str]] = None
+    skills: Optional[list[str]] = None
 
     @field_validator("skills")
     @classmethod
@@ -107,7 +106,7 @@ class SkillExperience(BaseModel):
 # Updated SkillExperienceResponse with flexible input handling
 class SkillExperienceResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    skills: Optional[List[Union[SkillExperience, Dict, List, Tuple, str]]] = None
+    skills: Optional[list[Union[SkillExperience, dict, list, tuple, str]]] = None
 
     @model_validator(mode="after")
     def transform_skills(self):
@@ -128,9 +127,7 @@ class SkillExperienceResponse(BaseModel):
                 else:
                     skill, experience = item[0], None
 
-                transformed_skills.append(
-                    SkillExperience(skill=skill, experience=experience)
-                )
+                transformed_skills.append(SkillExperience(skill=skill, experience=experience))
 
             # String format (skill only)
             elif isinstance(item, str):
@@ -139,9 +136,7 @@ class SkillExperienceResponse(BaseModel):
             # Dictionary format
             elif isinstance(item, dict) and "skill" in item:
                 transformed_skills.append(
-                    SkillExperience(
-                        skill=item["skill"], experience=item.get("experience")
-                    )
+                    SkillExperience(skill=item["skill"], experience=item.get("experience"))
                 )
 
         self.skills = transformed_skills
@@ -150,7 +145,7 @@ class SkillExperienceResponse(BaseModel):
 
 class AttributesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    attributes: Optional[List[str]] = None
+    attributes: Optional[list[str]] = None
 
     @field_validator("attributes")
     @classmethod
@@ -186,7 +181,7 @@ class IndustryResponse(BaseModel):
 
 class BenefitsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    benefits: Optional[List[str]] = None
+    benefits: Optional[list[str]] = None
 
     @field_validator("benefits")
     @classmethod
@@ -198,7 +193,7 @@ class BenefitsResponse(BaseModel):
 
 class DutiesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    duties: Optional[List[str]] = None
+    duties: Optional[list[str]] = None
 
     @field_validator("duties")
     @classmethod
@@ -210,7 +205,7 @@ class DutiesResponse(BaseModel):
 
 class QualificationsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    qualifications: Optional[List[str]] = None
+    qualifications: Optional[list[str]] = None
 
     @field_validator("qualifications")
     @classmethod
@@ -290,8 +285,8 @@ class JobAdvertResponse(BaseModel):
 
 
 def transform_skills_response(
-    response_data: Union[Dict[str, Any], BaseModel],
-) -> Dict[str, List[Tuple[str, Optional[str]]]]:
+    response_data: Union[dict[str, Any], BaseModel],
+) -> dict[str, list[tuple[str, Optional[str]]]]:
     """
     Transform skills response data into the expected tuple format.
     Handles various input formats and ensures "not_listed" values are properly converted to None.
@@ -350,9 +345,7 @@ def transform_skills_response(
                     (
                         skill.strip(),
                         experience.strip()
-                        if experience
-                        and isinstance(experience, str)
-                        and experience != "not_listed"
+                        if experience and isinstance(experience, str) and experience != "not_listed"
                         else None,
                     )
                 )
@@ -377,9 +370,7 @@ def transform_skills_response(
                     (
                         skill.strip(),
                         experience.strip()
-                        if experience
-                        and isinstance(experience, str)
-                        and experience != "not_listed"
+                        if experience and isinstance(experience, str) and experience != "not_listed"
                         else None,
                     )
                 )
@@ -404,9 +395,7 @@ def transform_skills_response(
                     (
                         skill.strip(),
                         experience.strip()
-                        if experience
-                        and isinstance(experience, str)
-                        and experience != "not_listed"
+                        if experience and isinstance(experience, str) and experience != "not_listed"
                         else None,
                     )
                 )
@@ -464,7 +453,7 @@ def transform_skills_response(
 
 
 class URLDiscoveryConfig(BaseModel):
-    search_terms: List[str]
+    search_terms: list[str]
     max_results: int = Field(default=10, gt=0)
     interval_minutes: int = Field(default=60, gt=0)
 
@@ -479,7 +468,7 @@ class URLProcessingResult(BaseModel):
     url: str
     title: Optional[str] = None
     description: Optional[str] = None
-    skills: List[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
     company: Optional[str] = None
     location: Optional[str] = None
     salary_range: Optional[str] = None
@@ -492,7 +481,7 @@ class URL(BaseModel):
 
     url: str
     domain: str
-    prompt_responses: List[Dict[str, str]] = []
+    prompt_responses: list[dict[str, str]] = []
     source: str = "direct"
     status: Optional[str] = None
     error_count: int = 0
